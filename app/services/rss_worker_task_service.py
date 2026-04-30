@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
-from app.errors.custom_exceptions import (
+from shared_backend.errors.custom_exceptions import (
     WorkerProtocolError,
 )
 from app.schemas.workers.worker_rss_result_schema import WorkerRssTaskResultPayloadSchema

@@ -7,12 +7,12 @@ from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlparse
 
-from app.errors.custom_exceptions import (
+from shared_backend.errors.custom_exceptions import (
     WorkerReleaseCatalogError,
     WorkerReleaseDownloadForbiddenError,
     WorkerReleaseNotFoundError,
 )
-from app.schemas.workers.worker_release_schema import (
+from shared_backend.schemas.workers.worker_release_schema import (
     WorkerDesktopReleaseListRead,
     WorkerDesktopReleaseRead,
     WorkerPingRead,

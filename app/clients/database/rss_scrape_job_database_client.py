@@ -6,7 +6,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.domain.rss_catalog_normalization import normalize_host
-from app.schemas.rss.rss_scrape_job_schema import RssScrapeFeedPayloadSchema
+from shared_backend.schemas.rss.rss_scrape_job_schema import RssScrapeFeedPayloadSchema
 
 
 def list_rss_feed_scrape_payloads(

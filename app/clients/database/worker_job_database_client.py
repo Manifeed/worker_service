@@ -7,7 +7,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.schemas.jobs.job_schema import JobStatusRead
+from shared_backend.schemas.jobs.job_schema import JobStatusRead
 
 
 QUEUE_NAME_RSS_SCRAPE_REQUESTS = "rss.fetch"

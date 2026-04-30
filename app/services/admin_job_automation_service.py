@@ -9,11 +9,11 @@ import sys
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.errors.custom_exceptions import JobNotFoundError
-from app.errors.custom_exceptions import JobAlreadyRunningError
+from shared_backend.errors.custom_exceptions import JobNotFoundError
+from shared_backend.errors.custom_exceptions import JobAlreadyRunningError
 from app.domain.job_lock import JobAlreadyRunning, job_lock
-from app.schemas.enums import WorkerJobKind, WorkerKind
-from app.schemas.jobs.job_automation_schema import (
+from shared_backend.schemas.enums import WorkerJobKind, WorkerKind
+from shared_backend.schemas.jobs.job_automation_schema import (
     JobAutomationRead,
     JobAutomationUpdateRequestSchema,
 )

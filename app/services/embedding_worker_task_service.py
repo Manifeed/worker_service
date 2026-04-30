@@ -4,7 +4,7 @@ import math
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
-from app.errors.custom_exceptions import (
+from shared_backend.errors.custom_exceptions import (
     WorkerProtocolError,
     WorkerTaskStateError,
     WorkerTaskValidationError,

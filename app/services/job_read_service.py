@@ -4,8 +4,8 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
-from app.errors.custom_exceptions import JobNotFoundError
-from app.schemas.jobs.job_schema import (
+from shared_backend.errors.custom_exceptions import JobNotFoundError
+from shared_backend.schemas.jobs.job_schema import (
     JobOverviewItemRead,
     JobStatusRead,
     JobTaskRead,

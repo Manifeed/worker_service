@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.errors.custom_exceptions import WorkerReleaseCatalogError
+from shared_backend.errors.custom_exceptions import WorkerReleaseCatalogError
 
 
 @dataclass(frozen=True)

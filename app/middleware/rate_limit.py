@@ -10,7 +10,7 @@ from app.clients.networking.redis_networking_client import (
 )
 from fastapi import Request
 
-from app.errors.custom_exceptions import RateLimitExceededError
+from shared_backend.errors.custom_exceptions import RateLimitExceededError
 from app.utils.environment_utils import is_production_like_environment
 
 

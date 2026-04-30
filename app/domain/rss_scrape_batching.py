@@ -5,7 +5,7 @@ from collections.abc import Iterable
 from random import Random
 from urllib.parse import urlparse
 
-from app.schemas.rss.rss_scrape_job_schema import RssScrapeFeedPayloadSchema
+from shared_backend.schemas.rss.rss_scrape_job_schema import RssScrapeFeedPayloadSchema
 
 
 def build_rss_scrape_batches(

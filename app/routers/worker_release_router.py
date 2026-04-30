@@ -6,8 +6,8 @@ from fastapi.responses import FileResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
-from app.errors.custom_exceptions import WorkerReleaseNotFoundError
-from app.schemas.workers.worker_release_schema import (
+from shared_backend.errors.custom_exceptions import WorkerReleaseNotFoundError
+from shared_backend.schemas.workers.worker_release_schema import (
     WorkerDesktopReleaseListRead,
     WorkerPingRead,
     WorkerReleaseManifestRead,

@@ -4,13 +4,13 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
-from app.errors.custom_exceptions import JobAlreadyRunningError, JobEnqueueError
+from shared_backend.errors.custom_exceptions import JobAlreadyRunningError, JobEnqueueError
 from app.domain.job_lock import JobAlreadyRunning, job_lock
 from app.clients.database.rss_scrape_job_database_client import list_rss_feed_scrape_payloads
 from app.domain.rss_scrape_batching import build_rss_scrape_batches
-from app.schemas.enums import WorkerJobKind, WorkerJobStatus
-from app.schemas.jobs.job_enqueue_schema import JobEnqueueRead
-from app.schemas.sources.source_embedding_schema import RssSourceEmbeddingPayloadSchema
+from shared_backend.schemas.enums import WorkerJobKind, WorkerJobStatus
+from shared_backend.schemas.jobs.job_enqueue_schema import JobEnqueueRead
+from shared_backend.schemas.sources.source_embedding_schema import RssSourceEmbeddingPayloadSchema
 from app.clients.database.article_embedding_database_client import list_articles_without_embeddings
 from app.domain.source_embedding_config import (
     FIXED_SOURCE_EMBEDDING_MODEL_NAME,

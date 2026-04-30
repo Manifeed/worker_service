@@ -6,7 +6,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from app.clients.database.auth_database_client import get_user_api_key_context_by_hash
-from app.errors.custom_exceptions import (
+from shared_backend.errors.custom_exceptions import (
     ApiAccessDisabledError,
     InactiveUserError,
     InvalidWorkerApiKeyError,

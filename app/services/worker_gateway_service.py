@@ -10,7 +10,7 @@ from app.clients.database.auth_database_client import (
     touch_user_api_key_last_used,
     upsert_api_key_worker_usage,
 )
-from app.errors.custom_exceptions import (
+from shared_backend.errors.custom_exceptions import (
     WorkerLeaseNotFoundError,
     WorkerLeaseStateError,
     WorkerProtocolError,
