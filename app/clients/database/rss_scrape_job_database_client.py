@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime, timezone
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.domain.rss_catalog_normalization import normalize_host
 from shared_backend.schemas.rss.rss_scrape_job_schema import RssScrapeFeedPayloadSchema
+from shared_backend.utils.datetime_utils import normalize_datetime_to_utc
 
 
 def list_rss_feed_scrape_payloads(
@@ -64,16 +64,8 @@ def list_rss_feed_scrape_payloads(
             host_header=normalize_host(row['company_host']),
             fetchprotection=int(row['fetchprotection'] or 1),
             etag=(str(row['etag']) if row['etag'] is not None else None),
-            last_update=_normalize_datetime(row['last_feed_update']),
-            last_db_article_published_at=_normalize_datetime(row['last_article_published_at']),
+            last_update=normalize_datetime_to_utc(row['last_feed_update']),
+            last_db_article_published_at=normalize_datetime_to_utc(row['last_article_published_at']),
         )
         for row in rows
     ]
-
-
-def _normalize_datetime(value: datetime | None) -> datetime | None:
-    if value is None:
-        return None
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)

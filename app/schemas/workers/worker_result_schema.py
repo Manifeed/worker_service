@@ -6,7 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
-WorkerResultStatus = Literal["ok", "error"]
+WorkerResultStatus = Literal["ok", "success", "not_modified", "error"]
 
 
 class WorkerResultSourceSchema(BaseModel):
@@ -27,4 +27,3 @@ class WorkerResultSchema(BaseModel):
     new_etag: str | None = Field(default=None, max_length=1024)
     new_last_update: datetime | None = None
     sources: list[WorkerResultSourceSchema] = Field(default_factory=list)
-

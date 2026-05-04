@@ -43,6 +43,35 @@ class WorkerJobTaskRecord:
     item_total: int
 
 
+@dataclass(frozen=True)
+class WorkerJobRecord:
+    job_id: str
+    job_kind: str
+    task_type: str
+    worker_version: str | None
+    requested_at: datetime
+    started_at: datetime | None
+    finished_at: datetime | None
+    finalized_at: datetime | None
+    status: str
+    task_total: int
+    task_processed: int
+    item_total: int
+    item_success: int
+    item_error: int
+
+
+@dataclass(frozen=True)
+class WorkerJobProgressSnapshot:
+    task_total: int
+    task_processed: int
+    item_success: int
+    item_error: int
+    processing_count: int
+    pending_count: int
+    cancelled_count: int
+
+
 def create_worker_job(
     db: Session,
     *,
@@ -131,6 +160,59 @@ def get_active_worker_job_id(
     return str(job_id)
 
 
+def get_worker_job_record(
+    db: Session,
+    *,
+    job_id: str,
+) -> WorkerJobRecord | None:
+    row = (
+        db.execute(
+            text(
+                """
+                SELECT
+                    job_id,
+                    job_kind,
+                    task_type,
+                    worker_version,
+                    requested_at,
+                    started_at,
+                    finished_at,
+                    finalized_at,
+                    status,
+                    task_total,
+                    task_processed,
+                    item_total,
+                    item_success,
+                    item_error
+                FROM worker_jobs
+                WHERE job_id = :job_id
+                """
+            ),
+            {"job_id": job_id},
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if row is None:
+        return None
+    return WorkerJobRecord(
+        job_id=str(row["job_id"]),
+        job_kind=str(row["job_kind"]),
+        task_type=str(row["task_type"]),
+        worker_version=(str(row["worker_version"]) if row["worker_version"] is not None else None),
+        requested_at=row["requested_at"],
+        started_at=row["started_at"],
+        finished_at=row["finished_at"],
+        finalized_at=row["finalized_at"],
+        status=str(row["status"]),
+        task_total=int(row["task_total"] or 0),
+        task_processed=int(row["task_processed"] or 0),
+        item_total=int(row["item_total"] or 0),
+        item_success=int(row["item_success"] or 0),
+        item_error=int(row["item_error"] or 0),
+    )
+
+
 def enqueue_worker_tasks(
     db: Session,
     *,
@@ -216,9 +298,11 @@ def claim_worker_tasks(
                 WITH candidate AS (
                     SELECT task.task_id
                     FROM worker_tasks AS task
+                    JOIN worker_jobs AS job ON job.job_id = task.job_id
                     WHERE """
                 + " AND ".join(filters)
                 + """
+                    AND job.status IN ('queued', 'processing')
                     ORDER BY task.requested_at ASC, task.task_id ASC
                     LIMIT :task_count
                     FOR UPDATE SKIP LOCKED
@@ -227,18 +311,18 @@ def claim_worker_tasks(
                     UPDATE worker_tasks AS task
                     SET
                         status = 'processing',
-                claimed_at = now(),
-                claim_expires_at = now() + (:lease_seconds * interval '1 second'),
-                attempt_count = task.attempt_count + 1,
-                execution_id = nextval('worker_task_execution_id_seq')
-            FROM candidate
-            WHERE task.task_id = candidate.task_id
-            RETURNING
-                task.task_id,
-                task.execution_id,
-                task.job_id,
-                task.requested_at,
-                task.payload,
+                        claimed_at = now(),
+                        claim_expires_at = now() + (:lease_seconds * interval '1 second'),
+                        attempt_count = task.attempt_count + 1,
+                        execution_id = nextval('worker_task_execution_id_seq')
+                    FROM candidate
+                    WHERE task.task_id = candidate.task_id
+                    RETURNING
+                        task.task_id,
+                        task.execution_id,
+                        task.job_id,
+                        task.requested_at,
+                        task.payload,
                         task.worker_version,
                         task.task_type
                 )
@@ -395,22 +479,23 @@ def mark_worker_task_failed(
     return result.rowcount > 0
 
 
-def refresh_worker_job_status(
+def get_worker_job_progress_snapshot(
     db: Session,
     *,
     job_id: str,
-) -> None:
+) -> WorkerJobProgressSnapshot | None:
     row = (
         db.execute(
             text(
                 """
                 SELECT
                     COUNT(task.task_id) AS task_total,
-                    COUNT(task.task_id) FILTER (WHERE task.status IN ('completed', 'failed')) AS task_processed,
+                    COUNT(task.task_id) FILTER (WHERE task.status IN ('completed', 'failed', 'cancelled')) AS task_processed,
                     COALESCE(SUM(task.item_success), 0) AS item_success,
                     COALESCE(SUM(task.item_error), 0) AS item_error,
                     COUNT(task.task_id) FILTER (WHERE task.status = 'processing') AS processing_count,
-                    COUNT(task.task_id) FILTER (WHERE task.status = 'pending') AS pending_count
+                    COUNT(task.task_id) FILTER (WHERE task.status = 'pending') AS pending_count,
+                    COUNT(task.task_id) FILTER (WHERE task.status = 'cancelled') AS cancelled_count
                 FROM worker_tasks AS task
                 WHERE task.job_id = :job_id
                 """
@@ -421,60 +506,140 @@ def refresh_worker_job_status(
         .one_or_none()
     )
     if row is None:
+        return None
+    return WorkerJobProgressSnapshot(
+        task_total=int(row["task_total"] or 0),
+        task_processed=int(row["task_processed"] or 0),
+        item_success=int(row["item_success"] or 0),
+        item_error=int(row["item_error"] or 0),
+        processing_count=int(row["processing_count"] or 0),
+        pending_count=int(row["pending_count"] or 0),
+        cancelled_count=int(row["cancelled_count"] or 0),
+    )
+
+
+def refresh_worker_job_status(
+    db: Session,
+    *,
+    job_id: str,
+) -> None:
+    snapshot = get_worker_job_progress_snapshot(db, job_id=job_id)
+    if snapshot is None:
         return
-    task_total = int(row["task_total"] or 0)
-    task_processed = int(row["task_processed"] or 0)
-    item_success = int(row["item_success"] or 0)
-    item_error = int(row["item_error"] or 0)
-    processing_count = int(row["processing_count"] or 0)
-    pending_count = int(row["pending_count"] or 0)
-    if task_total == 0:
-        status = "completed"
-    elif processing_count > 0 or (task_processed > 0 and pending_count > 0):
-        status = "processing"
-    elif pending_count == task_total:
-        status = "queued"
-    elif item_error > 0:
-        status = "completed_with_errors"
-    else:
-        status = "completed"
-    db.execute(
+    _update_worker_job_status_row(
+        db,
+        job_id=job_id,
+        status=_resolve_worker_job_status(snapshot),
+        snapshot=snapshot,
+    )
+
+
+def set_worker_job_status(
+    db: Session,
+    *,
+    job_id: str,
+    status: str,
+) -> bool:
+    snapshot = get_worker_job_progress_snapshot(db, job_id=job_id)
+    if snapshot is None:
+        return False
+    _update_worker_job_status_row(
+        db,
+        job_id=job_id,
+        status=status,
+        snapshot=snapshot,
+    )
+    return True
+
+
+def requeue_processing_tasks_for_job(
+    db: Session,
+    *,
+    job_id: str,
+) -> int:
+    result = db.execute(
         text(
             """
-            UPDATE worker_jobs
+            UPDATE worker_tasks
             SET
-                status = CAST(:status AS VARCHAR(64)),
-                task_total = :task_total,
-                task_processed = :task_processed,
-                item_success = :item_success,
-                item_error = :item_error,
-                started_at = CASE
-                    WHEN CAST(:status AS VARCHAR(64)) IN ('processing', 'completed', 'completed_with_errors')
-                        THEN COALESCE(started_at, now())
-                    ELSE started_at
-                END,
-                finished_at = CASE
-                    WHEN CAST(:status AS VARCHAR(64)) IN ('completed', 'completed_with_errors', 'failed')
-                        THEN COALESCE(finished_at, now())
-                    ELSE NULL
-                END,
-                finalized_at = CASE
-                    WHEN CAST(:status AS VARCHAR(64)) IN ('completed', 'completed_with_errors', 'failed')
-                        THEN COALESCE(finalized_at, now())
-                    ELSE NULL
-                END
+                status = 'pending',
+                claimed_at = NULL,
+                claim_expires_at = NULL
+            WHERE job_id = :job_id
+                AND status = 'processing'
+            """
+        ),
+        {"job_id": job_id},
+    )
+    return int(result.rowcount or 0)
+
+
+def cancel_active_tasks_for_job(
+    db: Session,
+    *,
+    job_id: str,
+) -> int:
+    result = db.execute(
+        text(
+            """
+            UPDATE worker_tasks
+            SET
+                status = 'cancelled',
+                claimed_at = NULL,
+                claim_expires_at = NULL,
+                completed_at = COALESCE(completed_at, now())
+            WHERE job_id = :job_id
+                AND status IN ('pending', 'processing')
+            """
+        ),
+        {"job_id": job_id},
+    )
+    return int(result.rowcount or 0)
+
+
+def delete_worker_job(
+    db: Session,
+    *,
+    job_id: str,
+) -> bool:
+    result = db.execute(
+        text(
+            """
+            DELETE FROM worker_jobs
             WHERE job_id = :job_id
             """
         ),
-        {
-            "job_id": job_id,
-            "status": status,
-            "task_total": task_total,
-            "task_processed": task_processed,
-            "item_success": item_success,
-            "item_error": item_error,
-        },
+        {"job_id": job_id},
     )
+    return result.rowcount > 0
+
+
+def clear_admin_job_automation_references(
+    db: Session,
+    *,
+    job_id: str,
+) -> int:
+    result = db.execute(
+        text(
+            """
+            UPDATE admin_job_automation_settings
+            SET
+                current_ingest_job_id = CASE
+                    WHEN current_ingest_job_id = :job_id THEN NULL
+                    ELSE current_ingest_job_id
+                END,
+                current_embed_job_id = CASE
+                    WHEN current_embed_job_id = :job_id THEN NULL
+                    ELSE current_embed_job_id
+                END,
+                updated_at = now()
+            WHERE current_ingest_job_id = :job_id
+                OR current_embed_job_id = :job_id
+            """
+        ),
+        {"job_id": job_id},
+    )
+    return int(result.rowcount or 0)
 
 
 def get_worker_job_status_read(
@@ -597,3 +762,65 @@ def list_worker_job_tasks(
         .all()
     )
     return [dict(row) for row in rows]
+
+
+def _resolve_worker_job_status(snapshot: WorkerJobProgressSnapshot) -> str:
+    if snapshot.task_total == 0:
+        return "completed"
+    if snapshot.processing_count > 0 or (
+        snapshot.task_processed > 0 and snapshot.pending_count > 0
+    ):
+        return "processing"
+    if snapshot.pending_count == snapshot.task_total or snapshot.pending_count > 0:
+        return "queued"
+    if snapshot.cancelled_count > 0:
+        return "cancelled"
+    if snapshot.item_error > 0:
+        return "completed_with_errors"
+    return "completed"
+
+
+def _update_worker_job_status_row(
+    db: Session,
+    *,
+    job_id: str,
+    status: str,
+    snapshot: WorkerJobProgressSnapshot,
+) -> None:
+    db.execute(
+        text(
+            """
+            UPDATE worker_jobs
+            SET
+                status = CAST(:status AS VARCHAR(64)),
+                task_total = :task_total,
+                task_processed = :task_processed,
+                item_success = :item_success,
+                item_error = :item_error,
+                started_at = CASE
+                    WHEN CAST(:status AS VARCHAR(64)) IN ('processing', 'paused', 'cancelled', 'completed', 'completed_with_errors', 'failed')
+                        THEN COALESCE(started_at, now())
+                    ELSE started_at
+                END,
+                finished_at = CASE
+                    WHEN CAST(:status AS VARCHAR(64)) IN ('cancelled', 'completed', 'completed_with_errors', 'failed')
+                        THEN COALESCE(finished_at, now())
+                    ELSE NULL
+                END,
+                finalized_at = CASE
+                    WHEN CAST(:status AS VARCHAR(64)) IN ('cancelled', 'completed', 'completed_with_errors', 'failed')
+                        THEN COALESCE(finalized_at, now())
+                    ELSE NULL
+                END
+            WHERE job_id = :job_id
+            """
+        ),
+        {
+            "job_id": job_id,
+            "status": status,
+            "task_total": snapshot.task_total,
+            "task_processed": snapshot.task_processed,
+            "item_success": snapshot.item_success,
+            "item_error": snapshot.item_error,
+        },
+    )

@@ -14,6 +14,11 @@ from app.services.admin_job_automation_service import (
     start_admin_job_automation_scheduler,
     stop_admin_job_automation_scheduler,
 )
+from shared_backend.utils.logging_utils import (
+    configure_service_logging,
+    create_request_logging_middleware,
+)
+from shared_backend.utils.public_url import require_public_base_url
 
 
 @asynccontextmanager
@@ -27,7 +32,15 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
+    configure_service_logging("worker-service")
+    require_public_base_url()
     app = FastAPI(title="Manifeed Worker Service", lifespan=lifespan)
+    app.middleware("http")(
+        create_request_logging_middleware(
+            service_name="worker-service",
+            route_class="worker-api",
+        )
+    )
     app.include_router(worker_gateway_router)
     app.include_router(worker_release_router)
     app.include_router(internal_jobs_router)

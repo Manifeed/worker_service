@@ -12,9 +12,10 @@ from app.domain.article_authors import (
 )
 from app.domain.article_identity import build_article_content_key, build_article_key
 from app.domain.source_identity import normalize_source_url
-from app.utils.public_url_utils import normalize_public_http_url
 from app.schemas.workers.worker_result_schema import WorkerResultSchema
 from app.schemas.workers.worker_rss_result_schema import WorkerRssTaskLocalDedupSchema
+from shared_backend.utils.datetime_utils import normalize_datetime_to_utc
+from shared_backend.utils.public_url import normalize_public_http_url
 
 
 @dataclass(frozen=True)
@@ -122,7 +123,7 @@ def _build_candidate_rows(
             )
             published_at_text = None
             if source.published_at is not None:
-                published_at_text = _normalize_datetime(source.published_at).isoformat()
+                published_at_text = normalize_datetime_to_utc(source.published_at).isoformat()
             canonical_url = normalize_source_url(source.url)
             if not canonical_url:
                 continue
@@ -637,13 +638,7 @@ def _resolve_latest_source_published_at(result: WorkerResultSchema) -> datetime 
     published_values: list[datetime] = []
     for source in result.sources:
         if source.published_at is not None:
-            published_values.append(_normalize_datetime(source.published_at))
+            published_values.append(normalize_datetime_to_utc(source.published_at))
     if not published_values:
         return None
     return max(published_values)
-
-
-def _normalize_datetime(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)

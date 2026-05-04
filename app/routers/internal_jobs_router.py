@@ -1,3 +1,5 @@
+from typing import Annotated
+
 from fastapi import APIRouter, Body, Depends, Path, Query
 from sqlalchemy.orm import Session
 
@@ -11,10 +13,21 @@ from shared_backend.schemas.jobs.job_automation_schema import (
     JobAutomationRead,
     JobAutomationUpdateRequestSchema,
 )
-from shared_backend.schemas.jobs.job_schema import JobStatusRead, JobTaskRead, JobsOverviewRead
+from shared_backend.schemas.jobs.job_schema import (
+    JobControlCommandRead,
+    JobStatusRead,
+    JobTaskRead,
+    JobsOverviewRead,
+)
 from app.services.admin_job_automation_service import (
     read_job_automation,
     update_job_automation,
+)
+from app.services.job_control_service import (
+    cancel_job,
+    delete_job_permanently,
+    pause_job,
+    resume_job,
 )
 from app.services.job_enqueue_service import (
     enqueue_rss_scrape_job,
@@ -45,7 +58,7 @@ def read_jobs_overview(
 
 @internal_jobs_router.post("/rss-scrape", response_model=JobEnqueueRead)
 def create_rss_scrape_job(
-    payload: RssScrapeJobCreateRequestSchema | None = Body(default=None),
+    payload: Annotated[RssScrapeJobCreateRequestSchema | None, Body(embed=True)] = None,
     content_db: Session = Depends(get_content_db_session),
     workers_db: Session = Depends(get_workers_db_session),
 ) -> JobEnqueueRead:
@@ -59,7 +72,7 @@ def create_rss_scrape_job(
 
 @internal_jobs_router.post("/source-embedding", response_model=JobEnqueueRead)
 def create_source_embedding_job(
-    payload: SourceEmbeddingJobCreateRequestSchema | None = Body(default=None),
+    payload: Annotated[SourceEmbeddingJobCreateRequestSchema | None, Body(embed=True)] = None,
     content_db: Session = Depends(get_content_db_session),
     workers_db: Session = Depends(get_workers_db_session),
 ) -> JobEnqueueRead:
@@ -80,7 +93,7 @@ def read_job_automation_route(
 
 @internal_jobs_router.patch("/automation", response_model=JobAutomationRead)
 def update_job_automation_route(
-    payload: JobAutomationUpdateRequestSchema,
+    payload: Annotated[JobAutomationUpdateRequestSchema, Body(embed=True)],
     workers_db: Session = Depends(get_workers_db_session),
 ) -> JobAutomationRead:
     return update_job_automation(workers_db, payload)
@@ -100,3 +113,35 @@ def read_job_status(
     db: Session = Depends(get_workers_db_session),
 ) -> JobStatusRead:
     return get_job_status(db, job_id=job_id)
+
+
+@internal_jobs_router.post("/{job_id}/pause", response_model=JobStatusRead)
+def pause_job_route(
+    job_id: str = Path(min_length=1),
+    db: Session = Depends(get_workers_db_session),
+) -> JobStatusRead:
+    return pause_job(db, job_id=job_id)
+
+
+@internal_jobs_router.post("/{job_id}/resume", response_model=JobStatusRead)
+def resume_job_route(
+    job_id: str = Path(min_length=1),
+    db: Session = Depends(get_workers_db_session),
+) -> JobStatusRead:
+    return resume_job(db, job_id=job_id)
+
+
+@internal_jobs_router.post("/{job_id}/cancel", response_model=JobStatusRead)
+def cancel_job_route(
+    job_id: str = Path(min_length=1),
+    db: Session = Depends(get_workers_db_session),
+) -> JobStatusRead:
+    return cancel_job(db, job_id=job_id)
+
+
+@internal_jobs_router.delete("/{job_id}", response_model=JobControlCommandRead)
+def delete_job_route(
+    job_id: str = Path(min_length=1),
+    db: Session = Depends(get_workers_db_session),
+) -> JobControlCommandRead:
+    return delete_job_permanently(db, job_id=job_id)

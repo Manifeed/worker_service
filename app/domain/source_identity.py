@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from app.utils.public_url_utils import normalize_public_http_url
+from shared_backend.utils.public_url import normalize_public_http_url
 
 
 _TRACKING_QUERY_PARAM_NAMES = frozenset(

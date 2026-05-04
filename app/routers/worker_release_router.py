@@ -25,14 +25,11 @@ from app.services.worker_auth_service import (
     require_authenticated_worker_context,
 )
 from database import get_identity_db_session
+from shared_backend.utils.public_url import build_public_url, require_public_base_url
 
 
 worker_release_router = APIRouter(prefix="/workers/api", tags=["workers-release"])
 _worker_download_bearer_scheme = HTTPBearer(auto_error=False)
-
-
-def _request_base_url(request: Request) -> str:
-    return str(request.base_url).rstrip("/")
 
 
 def _resolve_download_path(artifact_name: str, download_url: str) -> str:
@@ -44,9 +41,8 @@ def _resolve_download_path(artifact_name: str, download_url: str) -> str:
 
 def _rewrite_release_urls(
     payload: WorkerReleaseManifestRead | WorkerDesktopReleaseListRead,
-    request: Request,
 ) -> WorkerReleaseManifestRead | WorkerDesktopReleaseListRead:
-    base_url = _request_base_url(request)
+    public_base_url = require_public_base_url()
 
     if isinstance(payload, WorkerDesktopReleaseListRead):
         return payload.model_copy(
@@ -54,11 +50,11 @@ def _rewrite_release_urls(
                 "items": [
                     item.model_copy(
                         update={
-                            "download_url": (
-                                f"{base_url}"
-                                f"{_resolve_download_path(item.artifact_name, item.download_url)}"
+                            "download_url": build_public_url(
+                                public_base_url,
+                                _resolve_download_path(item.artifact_name, item.download_url),
                             ),
-                            "release_notes_url": f"{base_url}/workers",
+                            "release_notes_url": build_public_url(public_base_url, "/workers"),
                         }
                     )
                     for item in payload.items
@@ -68,11 +64,11 @@ def _rewrite_release_urls(
 
     return payload.model_copy(
         update={
-            "download_url": (
-                f"{base_url}"
-                f"{_resolve_download_path(payload.artifact_name, payload.download_url)}"
+            "download_url": build_public_url(
+                public_base_url,
+                _resolve_download_path(payload.artifact_name, payload.download_url),
             ),
-            "release_notes_url": f"{base_url}/workers",
+            "release_notes_url": build_public_url(public_base_url, "/workers"),
         }
     )
 
@@ -86,7 +82,6 @@ def read_authenticated_worker_ping(
 
 @worker_release_router.get("/releases/manifest", response_model=WorkerReleaseManifestRead)
 def read_release_manifest(
-    request: Request,
     product: str = Query(min_length=1, max_length=80),
     platform: str = Query(min_length=1, max_length=40),
     arch: str = Query(min_length=1, max_length=40),
@@ -95,12 +90,12 @@ def read_release_manifest(
     manifest = read_worker_release_manifest(
         product=product, platform=platform, arch=arch, runtime_bundle=runtime_bundle
     )
-    return _rewrite_release_urls(manifest, request)
+    return _rewrite_release_urls(manifest)
 
 
 @worker_release_router.get("/releases/desktop", response_model=WorkerDesktopReleaseListRead)
-def list_public_desktop_releases(request: Request) -> WorkerDesktopReleaseListRead:
-    return _rewrite_release_urls(list_worker_desktop_releases(), request)
+def list_public_desktop_releases() -> WorkerDesktopReleaseListRead:
+    return _rewrite_release_urls(list_worker_desktop_releases())
 
 
 @worker_release_router.get("/releases/download/{artifact_name}")

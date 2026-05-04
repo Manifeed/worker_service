@@ -17,6 +17,7 @@ from shared_backend.schemas.jobs.job_automation_schema import (
     JobAutomationRead,
     JobAutomationUpdateRequestSchema,
 )
+from shared_backend.utils.datetime_utils import normalize_datetime_to_utc
 from app.clients.database.worker_gateway_database_client import count_active_worker_sessions
 from app.services.worker_version_service import resolve_source_embedding_worker_version
 from database import open_content_db_session, open_workers_db_session
@@ -32,7 +33,7 @@ _SCHEDULER_GUARD = Lock()
 _SCHEDULER_THREAD: Thread | None = None
 _SCHEDULER_STOP_EVENT: Event | None = None
 _LOGGER = logging.getLogger("app")
-_FINISHED_JOB_STATUSES = {"completed", "completed_with_errors", "failed"}
+_FINISHED_JOB_STATUSES = {"cancelled", "completed", "completed_with_errors", "failed"}
 
 
 @dataclass(frozen=True)
@@ -269,7 +270,7 @@ def _build_runtime_snapshot(
         )
 
     if settings.current_embed_job_id:
-        if current_embed_status not in _FINISHED_JOB_STATUSES:
+        if not _is_finished_job_status(current_embed_status):
             return JobAutomationRuntimeSnapshot(
                 status="running_embed",
                 message="Embed job is running.",
@@ -282,7 +283,7 @@ def _build_runtime_snapshot(
             )
 
     if settings.current_ingest_job_id:
-        if current_ingest_status not in _FINISHED_JOB_STATUSES:
+        if not _is_finished_job_status(current_ingest_status):
             return JobAutomationRuntimeSnapshot(
                 status="running_ingest",
                 message="Ingest job is running.",
@@ -451,7 +452,7 @@ def _reconcile_finished_cycle(
     if settings.current_embed_job_id is None:
         return False
     current_embed_status = _get_job_status_value(workers_db, settings.current_embed_job_id)
-    if current_embed_status is None or current_embed_status in _FINISHED_JOB_STATUSES:
+    if _is_finished_job_status(current_embed_status):
         _update_runtime_fields(
             workers_db,
             last_cycle_started_at=settings.last_cycle_started_at,
@@ -498,7 +499,7 @@ def _resolve_next_run_at(
 ) -> datetime:
     if last_cycle_started_at is None:
         return now
-    normalized_last_cycle_started_at = _normalize_datetime(last_cycle_started_at)
+    normalized_last_cycle_started_at = normalize_datetime_to_utc(last_cycle_started_at)
     return normalized_last_cycle_started_at + timedelta(minutes=max(1, int(interval_minutes)))
 
 
@@ -516,7 +517,7 @@ def _map_settings_record(row) -> JobAutomationSettingsRecord:
     return JobAutomationSettingsRecord(
         enabled=bool(row["enabled"]),
         interval_minutes=max(1, int(row["interval_minutes"] or _DEFAULT_INTERVAL_MINUTES)),
-        last_cycle_started_at=_normalize_datetime(row["last_cycle_started_at"]),
+        last_cycle_started_at=normalize_datetime_to_utc(row["last_cycle_started_at"]),
         current_ingest_job_id=(
             str(row["current_ingest_job_id"])
             if row["current_ingest_job_id"] is not None
@@ -528,14 +529,8 @@ def _map_settings_record(row) -> JobAutomationSettingsRecord:
             else None
         ),
     )
-
-
-def _normalize_datetime(value: datetime | None) -> datetime | None:
-    if value is None:
-        return None
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+def _is_finished_job_status(status: str | None) -> bool:
+    return status is None or status in _FINISHED_JOB_STATUSES
 
 
 def _is_scheduler_disabled() -> bool:
