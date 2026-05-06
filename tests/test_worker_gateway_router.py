@@ -25,9 +25,9 @@ def _build_test_client() -> TestClient:
             api_key_secret_hash="secret-hash",
         )
     )
-    app.dependency_overrides[worker_gateway_router_module.get_identity_db_session] = lambda: object()
-    app.dependency_overrides[worker_gateway_router_module.get_workers_db_session] = lambda: object()
-    app.dependency_overrides[worker_gateway_router_module.get_content_db_session] = lambda: object()
+    app.dependency_overrides[worker_gateway_router_module.get_identity_read_db_session] = lambda: object()
+    app.dependency_overrides[worker_gateway_router_module.get_workers_write_db_session] = lambda: object()
+    app.dependency_overrides[worker_gateway_router_module.get_content_write_db_session] = lambda: object()
     return TestClient(app)
 
 

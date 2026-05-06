@@ -24,7 +24,7 @@ from app.services.worker_auth_service import (
     AuthenticatedWorkerContext,
     require_authenticated_worker_context,
 )
-from database import get_identity_db_session
+from database import get_identity_read_db_session
 from shared_backend.utils.public_url import build_public_url, require_public_base_url
 
 
@@ -103,7 +103,7 @@ def download_release_artifact(
     request: Request,
     artifact_name: str,
     credentials: HTTPAuthorizationCredentials | None = Depends(_worker_download_bearer_scheme),
-    db: Session = Depends(get_identity_db_session),
+    db: Session = Depends(get_identity_read_db_session),
 ) -> FileResponse:
     entry = read_worker_release_download_entry(artifact_name=artifact_name)
     if entry.download_auth == "worker_bearer":

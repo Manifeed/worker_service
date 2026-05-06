@@ -39,7 +39,11 @@ from app.services.job_read_service import (
     list_jobs,
 )
 
-from database import get_content_db_session, get_workers_db_session
+from database import (
+    get_content_read_db_session,
+    get_workers_read_db_session,
+    get_workers_write_db_session,
+)
 
 internal_jobs_router = APIRouter(
     prefix="/internal/jobs",
@@ -51,7 +55,7 @@ internal_jobs_router = APIRouter(
 @internal_jobs_router.get("", response_model=JobsOverviewRead)
 def read_jobs_overview(
     limit: int = Query(default=100, ge=1, le=500),
-    db: Session = Depends(get_workers_db_session),
+    db: Session = Depends(get_workers_read_db_session),
 ) -> JobsOverviewRead:
     return list_jobs(db, limit=limit)
 
@@ -59,8 +63,8 @@ def read_jobs_overview(
 @internal_jobs_router.post("/rss-scrape", response_model=JobEnqueueRead)
 def create_rss_scrape_job(
     payload: Annotated[RssScrapeJobCreateRequestSchema | None, Body(embed=True)] = None,
-    content_db: Session = Depends(get_content_db_session),
-    workers_db: Session = Depends(get_workers_db_session),
+    content_db: Session = Depends(get_content_read_db_session),
+    workers_db: Session = Depends(get_workers_write_db_session),
 ) -> JobEnqueueRead:
     normalized_payload = payload or RssScrapeJobCreateRequestSchema()
     return enqueue_rss_scrape_job(
@@ -73,8 +77,8 @@ def create_rss_scrape_job(
 @internal_jobs_router.post("/source-embedding", response_model=JobEnqueueRead)
 def create_source_embedding_job(
     payload: Annotated[SourceEmbeddingJobCreateRequestSchema | None, Body(embed=True)] = None,
-    content_db: Session = Depends(get_content_db_session),
-    workers_db: Session = Depends(get_workers_db_session),
+    content_db: Session = Depends(get_content_read_db_session),
+    workers_db: Session = Depends(get_workers_write_db_session),
 ) -> JobEnqueueRead:
     normalized_payload = payload or SourceEmbeddingJobCreateRequestSchema()
     return enqueue_source_embedding_job(
@@ -86,7 +90,7 @@ def create_source_embedding_job(
 
 @internal_jobs_router.get("/automation", response_model=JobAutomationRead)
 def read_job_automation_route(
-    workers_db: Session = Depends(get_workers_db_session),
+    workers_db: Session = Depends(get_workers_write_db_session),
 ) -> JobAutomationRead:
     return read_job_automation(workers_db)
 
@@ -94,7 +98,7 @@ def read_job_automation_route(
 @internal_jobs_router.patch("/automation", response_model=JobAutomationRead)
 def update_job_automation_route(
     payload: Annotated[JobAutomationUpdateRequestSchema, Body(embed=True)],
-    workers_db: Session = Depends(get_workers_db_session),
+    workers_db: Session = Depends(get_workers_write_db_session),
 ) -> JobAutomationRead:
     return update_job_automation(workers_db, payload)
 
@@ -102,7 +106,7 @@ def update_job_automation_route(
 @internal_jobs_router.get("/{job_id}/tasks", response_model=list[JobTaskRead])
 def read_job_tasks(
     job_id: str = Path(min_length=1),
-    db: Session = Depends(get_workers_db_session),
+    db: Session = Depends(get_workers_read_db_session),
 ) -> list[JobTaskRead]:
     return list_job_tasks(db, job_id=job_id)
 
@@ -110,7 +114,7 @@ def read_job_tasks(
 @internal_jobs_router.get("/{job_id}", response_model=JobStatusRead)
 def read_job_status(
     job_id: str = Path(min_length=1),
-    db: Session = Depends(get_workers_db_session),
+    db: Session = Depends(get_workers_read_db_session),
 ) -> JobStatusRead:
     return get_job_status(db, job_id=job_id)
 
@@ -118,7 +122,7 @@ def read_job_status(
 @internal_jobs_router.post("/{job_id}/pause", response_model=JobStatusRead)
 def pause_job_route(
     job_id: str = Path(min_length=1),
-    db: Session = Depends(get_workers_db_session),
+    db: Session = Depends(get_workers_write_db_session),
 ) -> JobStatusRead:
     return pause_job(db, job_id=job_id)
 
@@ -126,7 +130,7 @@ def pause_job_route(
 @internal_jobs_router.post("/{job_id}/resume", response_model=JobStatusRead)
 def resume_job_route(
     job_id: str = Path(min_length=1),
-    db: Session = Depends(get_workers_db_session),
+    db: Session = Depends(get_workers_write_db_session),
 ) -> JobStatusRead:
     return resume_job(db, job_id=job_id)
 
@@ -134,7 +138,7 @@ def resume_job_route(
 @internal_jobs_router.post("/{job_id}/cancel", response_model=JobStatusRead)
 def cancel_job_route(
     job_id: str = Path(min_length=1),
-    db: Session = Depends(get_workers_db_session),
+    db: Session = Depends(get_workers_write_db_session),
 ) -> JobStatusRead:
     return cancel_job(db, job_id=job_id)
 
@@ -142,6 +146,6 @@ def cancel_job_route(
 @internal_jobs_router.delete("/{job_id}", response_model=JobControlCommandRead)
 def delete_job_route(
     job_id: str = Path(min_length=1),
-    db: Session = Depends(get_workers_db_session),
+    db: Session = Depends(get_workers_write_db_session),
 ) -> JobControlCommandRead:
     return delete_job_permanently(db, job_id=job_id)

@@ -20,7 +20,7 @@ from shared_backend.schemas.jobs.job_automation_schema import (
 from shared_backend.utils.datetime_utils import normalize_datetime_to_utc
 from app.clients.database.worker_gateway_database_client import count_active_worker_sessions
 from app.services.worker_version_service import resolve_source_embedding_worker_version
-from database import open_content_db_session, open_workers_db_session
+from database import open_content_read_db_session, open_workers_write_db_session
 
 from app.services.job_enqueue_service import enqueue_rss_scrape_job, enqueue_source_embedding_job
 from app.services.job_read_service import get_job_status
@@ -144,8 +144,8 @@ def stop_admin_job_automation_scheduler() -> None:
 
 
 def run_admin_job_automation_tick() -> None:
-    content_db = open_content_db_session()
-    workers_db = open_workers_db_session()
+    content_db = open_content_read_db_session()
+    workers_db = open_workers_write_db_session()
     try:
         try:
             with job_lock(workers_db, "admin_job_automation_tick"):

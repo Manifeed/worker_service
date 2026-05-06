@@ -13,8 +13,9 @@ def _build_test_client() -> TestClient:
     app = FastAPI()
     app.include_router(internal_jobs_router_module.internal_jobs_router)
     app.dependency_overrides[internal_jobs_router_module.require_internal_service_token] = lambda: None
-    app.dependency_overrides[internal_jobs_router_module.get_workers_db_session] = lambda: object()
-    app.dependency_overrides[internal_jobs_router_module.get_content_db_session] = lambda: object()
+    app.dependency_overrides[internal_jobs_router_module.get_workers_read_db_session] = lambda: object()
+    app.dependency_overrides[internal_jobs_router_module.get_workers_write_db_session] = lambda: object()
+    app.dependency_overrides[internal_jobs_router_module.get_content_read_db_session] = lambda: object()
     return TestClient(app)
 
 

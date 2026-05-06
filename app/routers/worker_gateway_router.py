@@ -23,7 +23,11 @@ from app.services.worker_auth_service import (
     require_authenticated_worker_context,
 )
 
-from database import get_content_db_session, get_identity_db_session, get_workers_db_session
+from database import (
+    get_content_write_db_session,
+    get_identity_read_db_session,
+    get_workers_write_db_session,
+)
 
 worker_gateway_router = APIRouter(prefix="/workers/api", tags=["workers"])
 
@@ -32,8 +36,8 @@ worker_gateway_router = APIRouter(prefix="/workers/api", tags=["workers"])
 def open_session_for_worker(
     payload: WorkerSessionOpenRequestSchema,
     worker: AuthenticatedWorkerContext = Depends(require_authenticated_worker_context),
-    identity_db: Session = Depends(get_identity_db_session),
-    workers_db: Session = Depends(get_workers_db_session),
+    identity_db: Session = Depends(get_identity_read_db_session),
+    workers_db: Session = Depends(get_workers_write_db_session),
 ) -> WorkerSessionOpenRead:
     return open_worker_session(identity_db, workers_db, worker=worker, payload=payload)
 
@@ -42,7 +46,7 @@ def open_session_for_worker(
 def claim_tasks_for_worker(
     payload: WorkerTaskClaimRequestSchema,
     worker: AuthenticatedWorkerContext = Depends(require_authenticated_worker_context),
-    workers_db: Session = Depends(get_workers_db_session),
+    workers_db: Session = Depends(get_workers_write_db_session),
 ) -> list[WorkerLeaseRead]:
     return claim_worker_session_tasks(workers_db, worker=worker, payload=payload)
 
@@ -52,8 +56,8 @@ async def complete_task_for_worker(
     request: Request,
     payload: WorkerTaskCompleteRequestSchema,
     worker: AuthenticatedWorkerContext = Depends(require_authenticated_worker_context),
-    content_db: Session = Depends(get_content_db_session),
-    workers_db: Session = Depends(get_workers_db_session),
+    content_db: Session = Depends(get_content_write_db_session),
+    workers_db: Session = Depends(get_workers_write_db_session),
 ) -> WorkerTaskCommandRead:
     raw_request_body = await request.body()
     complete_worker_session_task(
@@ -70,7 +74,7 @@ async def complete_task_for_worker(
 def fail_task_for_worker(
     payload: WorkerTaskFailRequestSchema,
     worker: AuthenticatedWorkerContext = Depends(require_authenticated_worker_context),
-    workers_db: Session = Depends(get_workers_db_session),
+    workers_db: Session = Depends(get_workers_write_db_session),
 ) -> WorkerTaskCommandRead:
     fail_worker_session_task(workers_db, worker=worker, payload=payload)
     return WorkerTaskCommandRead(ok=True)
