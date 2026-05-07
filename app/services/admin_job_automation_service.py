@@ -19,7 +19,6 @@ from shared_backend.schemas.jobs.job_automation_schema import (
 )
 from shared_backend.utils.datetime_utils import normalize_datetime_to_utc
 from app.clients.database.worker_gateway_database_client import count_active_worker_sessions
-from app.services.worker_version_service import resolve_source_embedding_worker_version
 from database import open_content_read_db_session, open_workers_write_db_session
 
 from app.services.job_enqueue_service import enqueue_rss_scrape_job, enqueue_source_embedding_job
@@ -231,11 +230,8 @@ def _build_runtime_snapshot(
         workers_db,
         worker_type=WorkerKind.RSS_SCRAPPER.value,
     )
-    connected_embedding_workers = count_active_worker_sessions(
-        workers_db,
-        worker_type=WorkerKind.SOURCE_EMBEDDING.value,
-    )
-    connected_workers = connected_rss_workers + connected_embedding_workers
+    connected_embedding_workers = 0
+    connected_workers = connected_rss_workers
     current_ingest_status = _get_job_status_value(workers_db, settings.current_ingest_job_id)
     current_embed_status = _get_job_status_value(workers_db, settings.current_embed_job_id)
     active_rss_job_id = get_active_worker_job_id(
@@ -245,7 +241,6 @@ def _build_runtime_snapshot(
     active_embedding_job_id = get_active_worker_job_id(
         workers_db,
         job_kind=WorkerJobKind.SOURCE_EMBEDDING.value,
-        worker_version=resolve_source_embedding_worker_version(),
     )
     next_run_at = (
         _resolve_next_run_at(
@@ -298,17 +293,6 @@ def _build_runtime_snapshot(
             return JobAutomationRuntimeSnapshot(
                 status="waiting_embedding_job",
                 message="Waiting for the current embedding job to finish before launching the automated embed.",
-                connected_workers=connected_workers,
-                connected_rss_workers=connected_rss_workers,
-                connected_embedding_workers=connected_embedding_workers,
-                next_run_at=next_run_at,
-                current_ingest_status=current_ingest_status,
-                current_embed_status=current_embed_status,
-            )
-        if connected_embedding_workers <= 0:
-            return JobAutomationRuntimeSnapshot(
-                status="waiting_embedding_workers",
-                message="Waiting for a connected embedding worker to launch embed.",
                 connected_workers=connected_workers,
                 connected_rss_workers=connected_rss_workers,
                 connected_embedding_workers=connected_embedding_workers,

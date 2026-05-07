@@ -40,7 +40,7 @@ class ArticleEmbeddingIndexRead:
 def list_articles_without_embeddings(
     db: Session,
     *,
-    worker_version: str,
+    model_name: str,
     reembed_model_mismatches: bool = False,
 ) -> list[ArticleEmbeddingCandidateRead]:
     del reembed_model_mismatches
@@ -62,13 +62,13 @@ def list_articles_without_embeddings(
                     SELECT 1
                     FROM embedding_manifest AS manifest
                     WHERE manifest.article_id = article.article_id
-                        AND manifest.worker_version = :worker_version
+                        AND manifest.model_name = :model_name
                         AND manifest.status = 'indexed'
                 )
                 ORDER BY article.article_id ASC
                 """
             ),
-            {"worker_version": worker_version},
+            {"model_name": model_name},
         )
         .mappings()
         .all()
@@ -88,9 +88,9 @@ def list_articles_without_embeddings(
 def count_indexed_embeddings(
     db: Session,
     *,
-    worker_version: str | None = None,
+    model_name: str | None = None,
 ) -> int:
-    if worker_version is None:
+    if model_name is None:
         return int(
             db.execute(
                 text(
@@ -109,10 +109,10 @@ def count_indexed_embeddings(
                 SELECT COUNT(*)
                 FROM embedding_manifest
                 WHERE status = 'indexed'
-                    AND worker_version = :worker_version
+                    AND model_name = :model_name
                 """
             ),
-            {"worker_version": worker_version},
+            {"model_name": model_name},
         ).scalar_one()
     )
 

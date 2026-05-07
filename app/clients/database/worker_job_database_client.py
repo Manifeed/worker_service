@@ -222,40 +222,42 @@ def enqueue_worker_tasks(
     requested_at: datetime,
     payloads: list[dict[str, Any]],
     item_counts: list[int],
-) -> int:
+) -> list[int]:
     if not payloads:
-        return 0
+        return []
     if len(payloads) != len(item_counts):
         raise ValueError("payloads and item_counts length mismatch")
-    db.execute(
-        text(
-            """
-            INSERT INTO worker_tasks (
-                job_id,
-                task_type,
-                worker_version,
-                payload,
-                requested_at,
-                status,
-                attempt_count,
-                item_total,
-                item_success,
-                item_error
-            ) VALUES (
-                :job_id,
-                :task_type,
-                :worker_version,
-                CAST(:payload AS JSONB),
-                :requested_at,
-                'pending',
-                0,
-                :item_total,
-                0,
-                0
-            )
-            """
-        ),
-        [
+    task_ids: list[int] = []
+    for payload, item_count in zip(payloads, item_counts, strict=True):
+        task_id = db.execute(
+            text(
+                """
+                INSERT INTO worker_tasks (
+                    job_id,
+                    task_type,
+                    worker_version,
+                    payload,
+                    requested_at,
+                    status,
+                    attempt_count,
+                    item_total,
+                    item_success,
+                    item_error
+                ) VALUES (
+                    :job_id,
+                    :task_type,
+                    :worker_version,
+                    CAST(:payload AS JSONB),
+                    :requested_at,
+                    'pending',
+                    0,
+                    :item_total,
+                    0,
+                    0
+                )
+                RETURNING task_id
+                """
+            ),
             {
                 "job_id": job_id,
                 "task_type": task_type,
@@ -263,11 +265,10 @@ def enqueue_worker_tasks(
                 "payload": json.dumps(payload, ensure_ascii=True, separators=(",", ":")),
                 "requested_at": requested_at,
                 "item_total": max(0, int(item_count)),
-            }
-            for payload, item_count in zip(payloads, item_counts, strict=True)
-        ],
-    )
-    return len(payloads)
+            },
+        ).scalar_one()
+        task_ids.append(int(task_id))
+    return task_ids
 
 
 def claim_worker_tasks(

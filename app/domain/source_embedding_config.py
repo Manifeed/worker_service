@@ -2,20 +2,31 @@ from __future__ import annotations
 
 import os
 
-FIXED_SOURCE_EMBEDDING_MODEL_NAME = "Xenova/multilingual-e5-large"
-DEFAULT_SOURCE_EMBEDDING_WORKER_VERSION = "e5-large-v1"
+FIXED_SOURCE_EMBEDDING_MODEL_NAME = "BAAI/bge-m3"
+DEFAULT_EMBEDDING_REDIS_QUEUE = "embedding:source_embedding"
+DEFAULT_SOURCE_EMBEDDING_BATCH_SIZE = 128
 DEFAULT_QDRANT_URL = "http://qdrant:6333"
 DEFAULT_QDRANT_COLLECTION = "article_embeddings"
 
 
-def resolve_default_source_embedding_worker_version() -> str:
-    worker_version = os.getenv(
-        "SOURCE_EMBEDDING_WORKER_VERSION",
-        DEFAULT_SOURCE_EMBEDDING_WORKER_VERSION,
-    ).strip()
-    if not worker_version:
-        return DEFAULT_SOURCE_EMBEDDING_WORKER_VERSION
-    return worker_version
+def resolve_source_embedding_model_name() -> str:
+    return FIXED_SOURCE_EMBEDDING_MODEL_NAME
+
+
+def resolve_embedding_redis_queue_name() -> str:
+    return os.getenv("EMBEDDING_REDIS_QUEUE", DEFAULT_EMBEDDING_REDIS_QUEUE).strip() or DEFAULT_EMBEDDING_REDIS_QUEUE
+
+
+def resolve_source_embedding_batch_size() -> int:
+    raw_value = os.getenv("SOURCE_EMBEDDING_BATCH_SIZE", "").strip()
+    if raw_value:
+        try:
+            parsed = int(raw_value)
+        except ValueError:
+            parsed = DEFAULT_SOURCE_EMBEDDING_BATCH_SIZE
+        if parsed > 0:
+            return parsed
+    return DEFAULT_SOURCE_EMBEDDING_BATCH_SIZE
 
 
 def resolve_source_embedding_dimensions() -> int | None:

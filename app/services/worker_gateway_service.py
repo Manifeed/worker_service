@@ -47,10 +47,6 @@ from app.clients.database.worker_gateway_database_client import (
     get_worker_session,
     reserve_worker_lease_result,
 )
-from app.services.embedding_worker_task_service import (
-    complete_embedding_task,
-    fail_embedding_task,
-)
 from app.services.rss_worker_task_service import (
     complete_rss_task,
     fail_rss_task,
@@ -348,15 +344,7 @@ def _complete_task(
             lease_id=payload.lease_id,
             result_payload=rss_result_payload,
         )
-    return complete_embedding_task(
-        content_db,
-        workers_db,
-        task_id=task_id,
-        execution_id=execution_id,
-        trace_id=payload.trace_id,
-        lease_id=payload.lease_id,
-        result_payload=payload.result_payload,
-    )
+    raise WorkerProtocolError(f"Unsupported worker task type: {payload.task_type}")
 
 
 def _fail_task(
@@ -376,14 +364,7 @@ def _fail_task(
             lease_id=payload.lease_id,
             error_message=payload.error_message,
         )
-    return fail_embedding_task(
-        db,
-        task_id=task_id,
-        execution_id=execution_id,
-        trace_id=payload.trace_id,
-        lease_id=payload.lease_id,
-        error_message=payload.error_message,
-    )
+    raise WorkerProtocolError(f"Unsupported worker task type: {payload.task_type}")
 
 
 def _validate_rss_worker_result_payload(payload: dict[str, Any]) -> WorkerRssTaskResultPayloadSchema:
@@ -503,8 +484,6 @@ def _resolve_signature_result_payload(
 def _resolve_worker_type_for_task(task_type: str) -> str:
     if _is_rss_task_type(task_type):
         return "rss_scrapper"
-    if task_type.startswith("embed"):
-        return "source_embedding"
     raise WorkerProtocolError(f"Unsupported worker task type: {task_type}")
 
 
@@ -518,7 +497,7 @@ def _require_worker_type(worker: AuthenticatedWorkerContext, expected_worker_typ
 
 
 def _build_payload_ref(*, task_type: str, task_id: int, execution_id: int) -> str:
-    task_namespace = "rss" if _is_rss_task_type(task_type) else "embed"
+    task_namespace = "rss" if _is_rss_task_type(task_type) else "unknown"
     return f"{task_namespace}:{task_id}:{execution_id}"
 
 
