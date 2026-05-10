@@ -28,7 +28,7 @@ class ArticleEmbeddingIndexRead:
     summary: str | None
     company_id: int | None
     company: str | None
-    language: str | None
+    country: str
     published_at: datetime | None
     feed_ids: list[int]
     feeds: list[dict[str, object]]
@@ -154,7 +154,7 @@ def get_article_embedding_index_reads(
                     article.image_url,
                     article.company_id,
                     company.name AS company,
-                    article.language,
+                    COALESCE(NULLIF(article.country, ''), 'xx') AS country,
                     article.published_at,
                     COALESCE(
                         (
@@ -229,7 +229,7 @@ def get_article_embedding_index_reads(
                 else None
             ),
             company=(str(row["company"]) if row["company"] is not None else None),
-            language=(str(row["language"]) if row["language"] is not None else None),
+            country=(str(row["country"]) if row["country"] is not None else "xx"),
             published_at=row["published_at"],
             feed_ids=[int(feed_id) for feed_id in (row["feed_ids"] or [])],
             feeds=[dict(feed) for feed in (row["feeds"] or []) if isinstance(feed, dict)],

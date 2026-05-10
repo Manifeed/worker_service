@@ -17,12 +17,15 @@ from app.schemas.workers.worker_rss_result_schema import WorkerRssTaskLocalDedup
 from shared_backend.utils.datetime_utils import normalize_datetime_to_utc
 from shared_backend.utils.public_url import normalize_public_http_url
 
+_ARTICLE_IMAGE_URL_MAX_LENGTH = 1000
+
 
 @dataclass(frozen=True)
 class _FeedContext:
     feed_id: int
     company_id: int | None
     company_name: str | None
+    country: str
 
 
 @dataclass(frozen=True)
@@ -37,6 +40,7 @@ class _CandidateRow:
     authors: tuple[str, ...]
     image_url: str | None
     company_id: int | None
+    country: str
     duplicate_hint: bool
 
 
@@ -82,7 +86,8 @@ def _load_feed_contexts(
                 SELECT
                     feed.id AS feed_id,
                     feed.company_id,
-                    company.name AS company_name
+                    company.name AS company_name,
+                    COALESCE(NULLIF(company.country, ''), 'xx') AS country
                 FROM rss_feeds AS feed
                 LEFT JOIN rss_company AS company
                     ON company.id = feed.company_id
@@ -99,6 +104,7 @@ def _load_feed_contexts(
             feed_id=int(row["feed_id"]),
             company_id=(int(row["company_id"]) if row["company_id"] is not None else None),
             company_name=(str(row["company_name"]) if row["company_name"] is not None else None),
+            country=str(row["country"] or "xx"),
         )
         for row in rows
     }
@@ -150,8 +156,9 @@ def _build_candidate_rows(
                     title=source.title,
                     summary=source.summary,
                     authors=tuple(author_names),
-                    image_url=normalize_public_http_url(source.image_url, require_https=True),
+                    image_url=_normalize_article_image_url(source.image_url),
                     company_id=(feed_context.company_id if feed_context is not None else None),
+                    country=(feed_context.country if feed_context is not None else "xx"),
                     duplicate_hint=False,
                 )
             )
@@ -189,10 +196,20 @@ def _build_candidate_rows(
                 authors=provisional_row.authors,
                 image_url=provisional_row.image_url,
                 company_id=provisional_row.company_id,
+                country=provisional_row.country,
                 duplicate_hint=duplicate_hint,
             )
         )
     return candidate_rows
+
+
+def _normalize_article_image_url(value: str | None) -> str | None:
+    normalized_value = normalize_public_http_url(value, require_https=True)
+    if normalized_value is None:
+        return None
+    if len(normalized_value) > _ARTICLE_IMAGE_URL_MAX_LENGTH:
+        return None
+    return normalized_value
 
 
 def _load_existing_article_keys(
@@ -287,7 +304,8 @@ def _upsert_article(
                     summary = COALESCE(:summary, articles.summary),
                     image_url = COALESCE(:image_url, articles.image_url),
                     content_key = COALESCE(articles.content_key, :content_key),
-                    company_id = COALESCE(:company_id, articles.company_id)
+                    company_id = COALESCE(:company_id, articles.company_id),
+                    country = COALESCE(NULLIF(:country, ''), articles.country, 'xx')
                 WHERE article_id = :article_id
                 """
             ),
@@ -300,6 +318,7 @@ def _upsert_article(
                 "image_url": candidate_row.image_url,
                 "content_key": candidate_row.content_key,
                 "company_id": candidate_row.company_id,
+                "country": candidate_row.country,
             },
         )
         return existing_article_id, existing_article_key
@@ -319,7 +338,7 @@ def _upsert_article(
                         title,
                         summary,
                         image_url,
-                        language,
+                        country,
                         company_id
                     ) VALUES (
                         :article_key,
@@ -330,7 +349,7 @@ def _upsert_article(
                         :title,
                         :summary,
                         :image_url,
-                        NULL,
+                        :country,
                         :company_id
                     )
                     RETURNING article_id
@@ -344,6 +363,7 @@ def _upsert_article(
                     "title": candidate_row.title,
                     "summary": candidate_row.summary,
                     "image_url": candidate_row.image_url,
+                    "country": candidate_row.country or "xx",
                     "company_id": candidate_row.company_id,
                 },
             ).scalar_one()
@@ -363,7 +383,8 @@ def _upsert_article(
                     summary = COALESCE(:summary, articles.summary),
                     image_url = COALESCE(:image_url, articles.image_url),
                     content_key = COALESCE(articles.content_key, :content_key),
-                    company_id = COALESCE(:company_id, articles.company_id)
+                    company_id = COALESCE(:company_id, articles.company_id),
+                    country = COALESCE(NULLIF(:country, ''), articles.country, 'xx')
                 WHERE article_id = :article_id
                 """
             ),
@@ -376,6 +397,7 @@ def _upsert_article(
                 "image_url": candidate_row.image_url,
                 "content_key": candidate_row.content_key,
                 "company_id": candidate_row.company_id,
+                "country": candidate_row.country,
             },
         )
         return existing_article_id, existing_article_key

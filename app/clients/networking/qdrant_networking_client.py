@@ -26,7 +26,7 @@ class QdrantArticleEmbeddingPointRead:
     worker_version: str
     company_id: int | None
     company: str | None
-    language: str | None
+    country: str
     published_at: str | None
     url: str | None
     title: str | None
@@ -75,7 +75,7 @@ class SimpleQdrantClient:
         summary: str | None,
         company_id: int | None,
         company: str | None,
-        language: str | None,
+        country: str | None,
         published_at: datetime | None,
         feed_ids: list[int],
         feeds: list[dict],
@@ -98,7 +98,7 @@ class SimpleQdrantClient:
             "summary": summary,
             "company_id": company_id,
             "company": company,
-            "language": language,
+            "country": _normalize_country(country),
             "published_at": (
                 published_at.isoformat()
                 if published_at is not None
@@ -172,11 +172,7 @@ class SimpleQdrantClient:
                 if payload.get("company_id") is not None
                 else None
             ),
-            language=(
-                str(payload["language"])
-                if payload.get("language") is not None
-                else None
-            ),
+            country=_normalize_country(payload.get("country")),
             published_at=(
                 str(payload["published_at"])
                 if payload.get("published_at") is not None
@@ -388,7 +384,7 @@ class SimpleQdrantClient:
 
     def _ensure_payload_indexes(self) -> None:
         for field_name, field_schema in (
-            ("language", "keyword"),
+            ("country", "keyword"),
             ("published_at", "datetime"),
             ("feed_ids", "integer"),
             ("company_id", "integer"),
@@ -464,3 +460,10 @@ def build_article_embedding_point_id(
             f"{article_key}:{worker_version}",
         )
     )
+
+
+def _normalize_country(value: object) -> str:
+    if value is None:
+        return "xx"
+    normalized = str(value).strip().casefold()[:2]
+    return normalized or "xx"
