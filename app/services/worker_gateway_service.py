@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
 from datetime import timedelta
 from typing import Any
 from sqlalchemy.orm import Session
@@ -27,7 +26,6 @@ from app.schemas.workers.worker_gateway_schema import (
 )
 from app.schemas.workers.worker_rss_result_schema import WorkerRssTaskResultPayloadSchema
 from app.domain.worker_gateway_signature import (
-    CanonicalJsonNumber,
     format_worker_gateway_timestamp,
     generate_worker_gateway_id,
     generate_worker_gateway_nonce,
@@ -465,19 +463,7 @@ def _resolve_signature_result_payload(
     raw_request_body: bytes | None,
     result_payload: dict[str, Any],
 ) -> dict[str, Any]:
-    if not task_type.startswith("embed") or not raw_request_body:
-        return result_payload
-    try:
-        raw_payload = json.loads(
-            raw_request_body.decode("utf-8"),
-            parse_float=CanonicalJsonNumber,
-            parse_int=CanonicalJsonNumber,
-        )
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return result_payload
-    raw_result_payload = raw_payload.get("result_payload")
-    if isinstance(raw_result_payload, dict):
-        return raw_result_payload
+    del task_type, raw_request_body
     return result_payload
 
 

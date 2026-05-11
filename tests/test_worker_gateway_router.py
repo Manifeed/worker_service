@@ -19,8 +19,8 @@ def _build_test_client() -> TestClient:
             api_key_id=1,
             user_id=1,
             owner_email="worker@example.com",
-            worker_type="rss",
-            worker_name="worker-rss-1",
+            worker_type="rss_scrapper",
+            worker_name="crawler-rss-1",
             api_key_label="test",
             api_key_secret_hash="secret-hash",
         )
