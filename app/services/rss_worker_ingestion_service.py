@@ -18,6 +18,8 @@ from shared_backend.utils.datetime_utils import normalize_datetime_to_utc
 from shared_backend.utils.public_url import normalize_public_http_url
 
 _ARTICLE_IMAGE_URL_MAX_LENGTH = 1000
+_ARTICLE_URL_STORAGE_MAX_LENGTH = 4000
+_NORMALIZED_ARTICLE_URL_MAX_LENGTH = 1000
 
 
 @dataclass(frozen=True)
@@ -35,6 +37,7 @@ class _CandidateRow:
     content_key: str | None
     published_at: datetime | None
     canonical_url: str
+    source_urls: tuple[str, ...]
     title: str
     summary: str | None
     authors: tuple[str, ...]
@@ -130,7 +133,7 @@ def _build_candidate_rows(
             published_at_text = None
             if source.published_at is not None:
                 published_at_text = normalize_datetime_to_utc(source.published_at).isoformat()
-            canonical_url = normalize_source_url(source.url)
+            canonical_url = _resolve_primary_canonical_url(source.urls)
             if not canonical_url:
                 continue
             article_key = build_article_key(
@@ -153,6 +156,7 @@ def _build_candidate_rows(
                     content_key=content_key,
                     published_at=source.published_at,
                     canonical_url=canonical_url,
+                    source_urls=tuple(source.urls),
                     title=source.title,
                     summary=source.summary,
                     authors=tuple(author_names),
@@ -191,6 +195,7 @@ def _build_candidate_rows(
                 content_key=content_key,
                 published_at=provisional_row.published_at,
                 canonical_url=provisional_row.canonical_url,
+                source_urls=provisional_row.source_urls,
                 title=provisional_row.title,
                 summary=provisional_row.summary,
                 authors=provisional_row.authors,
@@ -210,6 +215,56 @@ def _normalize_article_image_url(value: str | None) -> str | None:
     if len(normalized_value) > _ARTICLE_IMAGE_URL_MAX_LENGTH:
         return None
     return normalized_value
+
+
+def _resolve_primary_canonical_url(raw_urls: list[str]) -> str | None:
+    for raw_url in raw_urls:
+        canonical_url = normalize_source_url(raw_url)
+        if canonical_url:
+            return canonical_url
+    return None
+
+
+def _upsert_article_url_variants(
+    db: Session,
+    *,
+    article_id: int,
+    raw_urls: tuple[str, ...],
+) -> None:
+    seen_normalized_urls: set[str] = set()
+    for raw_url in raw_urls:
+        normalized_url = normalize_source_url(raw_url)
+        if not normalized_url or normalized_url in seen_normalized_urls:
+            continue
+        if len(normalized_url) > _NORMALIZED_ARTICLE_URL_MAX_LENGTH:
+            continue
+        seen_normalized_urls.add(normalized_url)
+        stored_url = raw_url.strip()
+        if len(stored_url) > _ARTICLE_URL_STORAGE_MAX_LENGTH:
+            stored_url = stored_url[:_ARTICLE_URL_STORAGE_MAX_LENGTH]
+        db.execute(
+            text(
+                """
+                INSERT INTO article_url (
+                    article_id,
+                    url,
+                    normalized_url
+                ) VALUES (
+                    :article_id,
+                    :url,
+                    :normalized_url
+                )
+                ON CONFLICT (normalized_url) DO UPDATE SET
+                    article_id = EXCLUDED.article_id,
+                    url = EXCLUDED.url
+                """
+            ),
+            {
+                "article_id": article_id,
+                "url": stored_url,
+                "normalized_url": normalized_url,
+            },
+        )
 
 
 def _load_existing_article_keys(
@@ -282,6 +337,11 @@ def _merge_candidates_into_articles(
             db,
             article_id=article_id,
             feed_id=candidate_row.feed_id,
+        )
+        _upsert_article_url_variants(
+            db,
+            article_id=article_id,
+            raw_urls=candidate_row.source_urls,
         )
 
 
