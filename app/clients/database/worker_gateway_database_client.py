@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from shared_backend.utils.datetime_utils import normalize_datetime_to_utc
+
 
 @dataclass(frozen=True)
 class WorkerSessionRecord:
@@ -67,7 +69,7 @@ def create_worker_session(
                 "api_key_id": api_key_id,
                 "worker_type": worker_type,
                 "worker_version": worker_version,
-                "expires_at": _normalize_datetime(expires_at),
+                "expires_at": normalize_datetime_to_utc(expires_at),
             },
         )
         .mappings()
@@ -162,7 +164,7 @@ def create_worker_lease(
                 "session_id": session_id,
                 "task_type": task_type,
                 "payload_ref": payload_ref,
-                "expires_at": _normalize_datetime(expires_at),
+                "expires_at": normalize_datetime_to_utc(expires_at),
                 "signature_hash": signature_hash,
             },
         )
@@ -290,7 +292,7 @@ def _map_worker_session(row) -> WorkerSessionRecord:
         api_key_id=int(row["api_key_id"]),
         worker_type=str(row["worker_type"]),
         worker_version=(str(row["worker_version"]) if row["worker_version"] is not None else None),
-        expires_at=_normalize_datetime(row["expires_at"]) or datetime.now(timezone.utc),
+        expires_at=normalize_datetime_to_utc(row["expires_at"]) or datetime.now(timezone.utc),
     )
 
 
@@ -300,7 +302,7 @@ def _map_worker_lease(row) -> WorkerLeaseRecord:
         session_id=str(row["session_id"]),
         task_type=str(row["task_type"]),
         payload_ref=str(row["payload_ref"]),
-        expires_at=_normalize_datetime(row["expires_at"]) or datetime.now(timezone.utc),
+        expires_at=normalize_datetime_to_utc(row["expires_at"]) or datetime.now(timezone.utc),
         result_status=(str(row["result_status"]) if row["result_status"] is not None else None),
         result_nonce=(str(row["result_nonce"]) if row["result_nonce"] is not None else None),
         signature_hash=str(row["signature_hash"]),
@@ -310,11 +312,3 @@ def _map_worker_lease(row) -> WorkerLeaseRecord:
             else None
         ),
     )
-
-
-def _normalize_datetime(value: datetime | None) -> datetime | None:
-    if value is None:
-        return None
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)

@@ -8,6 +8,8 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from shared_backend.utils.datetime_utils import normalize_datetime_to_utc
+
 
 @dataclass(frozen=True)
 class UserRecord:
@@ -156,8 +158,8 @@ def _map_user(row: Mapping[str, Any]) -> UserRecord:
         role=str(row["role"]),
         is_active=bool(row["is_active"]),
         api_access_enabled=bool(row["api_access_enabled"]),
-        created_at=_normalize_datetime(row["created_at"]) or datetime.now(timezone.utc),
-        updated_at=_normalize_datetime(row["updated_at"]) or datetime.now(timezone.utc),
+        created_at=normalize_datetime_to_utc(row["created_at"]) or datetime.now(timezone.utc),
+        updated_at=normalize_datetime_to_utc(row["updated_at"]) or datetime.now(timezone.utc),
     )
 
 
@@ -169,15 +171,7 @@ def _map_user_api_key_context_key(row: Mapping[str, Any]) -> UserApiKeyRecord:
         worker_type=str(row["worker_type"]),
         worker_number=int(row["worker_number"]),
         key_prefix=str(row["key_prefix"]),
-        last_used_at=_normalize_datetime(row["last_used_at"]),
-        revoked_at=_normalize_datetime(row["revoked_at"]),
-        created_at=_normalize_datetime(row["api_key_created_at"]) or datetime.now(timezone.utc),
+        last_used_at=normalize_datetime_to_utc(row["last_used_at"]),
+        revoked_at=normalize_datetime_to_utc(row["revoked_at"]),
+        created_at=normalize_datetime_to_utc(row["api_key_created_at"]) or datetime.now(timezone.utc),
     )
-
-
-def _normalize_datetime(value: datetime | None) -> datetime | None:
-    if value is None:
-        return None
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)

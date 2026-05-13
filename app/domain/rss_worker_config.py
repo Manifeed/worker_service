@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 
-DEFAULT_RSS_WORKER_VERSION = "0.1.0"
+DEFAULT_RSS_WORKER_VERSION = "0.1.4"
 
 
 def resolve_default_rss_worker_version() -> str:

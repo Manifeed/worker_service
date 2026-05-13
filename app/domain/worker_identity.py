@@ -17,8 +17,6 @@ def build_worker_name(*, pseudo: str, worker_type: str, worker_number: int) -> s
 def _worker_type_slug(worker_type: str) -> str:
     if worker_type == "rss_scrapper":
         return "rss"
-    if worker_type == "source_embedding":
-        return "embedding"
     return normalize_user_pseudo(worker_type) or "worker"
 
 

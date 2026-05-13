@@ -1,0 +1,96 @@
+# Business Source License 1.1
+
+Version 1.1
+
+## Licensor
+
+Arthur Doireau
+
+## Licensed Work
+
+This license applies to the entire source code, documentation, assets, and related files contained in this repository, unless otherwise stated.
+
+Copyright (c) 2026 Arthur Doireau
+
+---
+
+# Additional Use Grant
+
+The Licensed Work may be used, copied, modified, and distributed under the following conditions:
+
+## Allowed Uses
+
+You are allowed to:
+
+- Use the software for personal purposes
+- Use the software for educational purposes
+- Use the software for research and experimentation
+- Use the software for development and testing
+- Modify the source code privately
+- Contribute modifications or improvements to the project
+- Self-host the software for non-commercial purposes
+
+## Restricted Uses
+
+Without explicit written commercial permission from the Licensor, you may NOT:
+
+- Use the software as part of a commercial product or service
+- Offer the software as a hosted service
+- Offer the software as a SaaS platform
+- Deploy the software in a commercial cloud environment
+- Resell the software
+- Provide paid support or managed services based on the software
+- Use substantial portions of the source code in a competing commercial product
+- Repackage or redistribute the software for commercial purposes
+
+## Commercial Licensing
+
+Commercial usage rights may be obtained through a separate commercial agreement with the Licensor.
+
+For commercial licensing inquiries, contact:
+
+contact@adoireau.design
+
+---
+
+# Change Date
+
+2036-01-01
+
+---
+
+# Change License
+
+On the Change Date, this software will automatically become licensed under:
+
+GNU Affero General Public License v3.0 (AGPL-3.0)
+
+https://www.gnu.org/licenses/agpl-3.0.html
+
+---
+
+# Terms
+
+This license is based on the Business Source License 1.1.
+
+Any use of the Licensed Work that is not explicitly authorized under this license is prohibited.
+
+The Licensor reserves all rights not expressly granted.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
+
+IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING FROM THE USE OF THE SOFTWARE.
+
+---
+
+# Third-Party Components
+
+Third-party libraries and dependencies included in this project may be subject to their own licenses.
+
+Users are responsible for complying with those licenses separately.
+
+---
+
+# Acceptance
+
+By using, modifying, or distributing this software, you agree to the terms of this license.

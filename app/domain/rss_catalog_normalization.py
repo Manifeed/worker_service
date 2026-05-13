@@ -15,8 +15,8 @@ def normalize_name_from_filename(file_name: str) -> str:
 
 def normalize_country(country: str | None) -> str | None:
     if country is None:
-        return None
-    return country.strip().lower()[:2]
+        return "xx"
+    return country.strip().lower()[:2] or "xx"
 
 
 def normalize_host(host: str | None) -> str | None:

@@ -13,9 +13,8 @@ from shared_backend.errors.custom_exceptions import (
     MissingWorkerBearerTokenError,
 )
 from app.domain.worker_identity import build_worker_name
-from app.middleware.rate_limit import enforce_rate_limit
 from app.utils.auth_utils import hash_secret_token
-from database import get_identity_db_session
+from database import get_identity_read_db_session
 
 _worker_bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -34,14 +33,8 @@ class AuthenticatedWorkerContext:
 def require_authenticated_worker_context(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_worker_bearer_scheme),
-    db: Session = Depends(get_identity_db_session),
+    db: Session = Depends(get_identity_read_db_session),
 ) -> AuthenticatedWorkerContext:
-    enforce_rate_limit(
-        request,
-        namespace="worker-auth-ip",
-        limit=360,
-        window_seconds=60,
-    )
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise MissingWorkerBearerTokenError()
 

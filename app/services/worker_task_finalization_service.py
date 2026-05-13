@@ -9,6 +9,7 @@ from shared_backend.errors.custom_exceptions import (
     WorkerTaskNotFoundError,
     WorkerTaskStateError,
 )
+from shared_backend.utils.datetime_utils import normalize_datetime_to_utc
 from app.clients.database.worker_job_database_client import (
     WorkerJobTaskRecord,
     get_worker_task_record,
@@ -101,14 +102,6 @@ def fail_claimed_worker_task(
         )
     refresh_worker_job_status(db, job_id=task.job_id)
     return task.job_id
-
-
-def normalize_worker_datetime(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
-
-
 def _require_active_execution(
     task_record: WorkerJobTaskRecord,
     *,
@@ -122,10 +115,10 @@ def _require_active_execution(
     if task_record.status != "processing":
         raise WorkerTaskStateError(
             f"{task_label} task {task_record.task_id} is not currently processing"
-        )
+    )
     if (
         task_record.claim_expires_at is not None
-        and normalize_worker_datetime(task_record.claim_expires_at) < datetime.now(timezone.utc)
+        and normalize_datetime_to_utc(task_record.claim_expires_at) < datetime.now(timezone.utc)
     ):
         raise WorkerTaskStateError(
             f"{task_label} task {task_record.task_id} claim expired before finalization"

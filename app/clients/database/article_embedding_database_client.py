@@ -28,7 +28,7 @@ class ArticleEmbeddingIndexRead:
     summary: str | None
     company_id: int | None
     company: str | None
-    language: str | None
+    country: str
     published_at: datetime | None
     feed_ids: list[int]
     feeds: list[dict[str, object]]
@@ -40,7 +40,7 @@ class ArticleEmbeddingIndexRead:
 def list_articles_without_embeddings(
     db: Session,
     *,
-    worker_version: str,
+    model_name: str,
     reembed_model_mismatches: bool = False,
 ) -> list[ArticleEmbeddingCandidateRead]:
     del reembed_model_mismatches
@@ -62,13 +62,13 @@ def list_articles_without_embeddings(
                     SELECT 1
                     FROM embedding_manifest AS manifest
                     WHERE manifest.article_id = article.article_id
-                        AND manifest.worker_version = :worker_version
+                        AND manifest.model_name = :model_name
                         AND manifest.status = 'indexed'
                 )
                 ORDER BY article.article_id ASC
                 """
             ),
-            {"worker_version": worker_version},
+            {"model_name": model_name},
         )
         .mappings()
         .all()
@@ -88,9 +88,9 @@ def list_articles_without_embeddings(
 def count_indexed_embeddings(
     db: Session,
     *,
-    worker_version: str | None = None,
+    model_name: str | None = None,
 ) -> int:
-    if worker_version is None:
+    if model_name is None:
         return int(
             db.execute(
                 text(
@@ -109,10 +109,10 @@ def count_indexed_embeddings(
                 SELECT COUNT(*)
                 FROM embedding_manifest
                 WHERE status = 'indexed'
-                    AND worker_version = :worker_version
+                    AND model_name = :model_name
                 """
             ),
-            {"worker_version": worker_version},
+            {"model_name": model_name},
         ).scalar_one()
     )
 
@@ -154,7 +154,7 @@ def get_article_embedding_index_reads(
                     article.image_url,
                     article.company_id,
                     company.name AS company,
-                    article.language,
+                    COALESCE(NULLIF(article.country, ''), 'xx') AS country,
                     article.published_at,
                     COALESCE(
                         (
@@ -229,7 +229,7 @@ def get_article_embedding_index_reads(
                 else None
             ),
             company=(str(row["company"]) if row["company"] is not None else None),
-            language=(str(row["language"]) if row["language"] is not None else None),
+            country=(str(row["country"]) if row["country"] is not None else "xx"),
             published_at=row["published_at"],
             feed_ids=[int(feed_id) for feed_id in (row["feed_ids"] or [])],
             feeds=[dict(feed) for feed in (row["feeds"] or []) if isinstance(feed, dict)],

@@ -1,18 +1,20 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 
-WorkerResultStatus = Literal["ok", "error"]
+WorkerResultStatus = Literal["ok", "success", "not_modified", "error"]
+
+WorkerResultSourceUrl = Annotated[str, StringConstraints(min_length=1, max_length=4000)]
 
 
 class WorkerResultSourceSchema(BaseModel):
     title: str = Field(min_length=1, max_length=2000)
     summary: str | None = Field(default=None, max_length=20000)
-    url: str = Field(min_length=1, max_length=4000)
+    urls: list[WorkerResultSourceUrl] = Field(min_length=1, max_length=64)
     published_at: datetime | None = None
     author: str | None = Field(default=None, max_length=255)
     authors: list[str] = Field(default_factory=list)
@@ -27,4 +29,3 @@ class WorkerResultSchema(BaseModel):
     new_etag: str | None = Field(default=None, max_length=1024)
     new_last_update: datetime | None = None
     sources: list[WorkerResultSourceSchema] = Field(default_factory=list)
-
