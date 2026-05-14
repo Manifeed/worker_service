@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import logging
 
 from sqlalchemy.orm import Session
 
@@ -11,10 +12,10 @@ from app.clients.networking.redis_embedding_queue_client import RedisEmbeddingQu
 from app.domain.rss_scrape_batching import build_rss_scrape_batches
 from shared_backend.schemas.enums import WorkerJobKind, WorkerJobStatus
 from shared_backend.schemas.jobs.job_enqueue_schema import JobEnqueueRead
-from shared_backend.schemas.sources.source_embedding_schema import RssSourceEmbeddingPayloadSchema
-from app.clients.database.article_embedding_database_client import list_articles_without_embeddings
+from app.clients.database.article_embedding_database_client import list_article_ids_without_embeddings
 from app.domain.source_embedding_config import (
     FIXED_SOURCE_EMBEDDING_MODEL_NAME,
+    resolve_embed_task_lease_seconds,
     resolve_source_embedding_batch_size,
 )
 from app.services.worker_version_service import (
@@ -27,6 +28,7 @@ from app.clients.database.worker_job_database_client import (
 )
 
 JOB_ID_TIMESTAMP_FORMAT = "%Y-%m-%d-%H-%M-%S"
+logger = logging.getLogger(__name__)
 
 
 def enqueue_rss_scrape_job(
@@ -123,14 +125,8 @@ def _enqueue_rss_scrape_job(
                 task_type="rss.fetch",
                 worker_version=worker_version,
                 requested_at=requested_at,
-                payloads=[
-                    {
-                        "job_id": job_id,
-                        "requested_at": requested_at.isoformat(),
-                        "ingest": True,
-                        "requested_by": "jobs.rss_scrape",
-                        "feeds": [feed.model_dump(mode="json") for feed in batch],
-                    }
+                ref_batches=[
+                    [int(feed.feed_id) for feed in batch]
                     for batch in feed_batches
                 ],
                 item_counts=[len(batch) for batch in feed_batches],
@@ -166,7 +162,7 @@ def _enqueue_source_embedding_job(
     if active_job_id is not None:
         raise JobAlreadyRunningError(f"Embedding job {active_job_id} is not finished yet")
 
-    candidates = list_articles_without_embeddings(
+    candidate_ids = list_article_ids_without_embeddings(
         content_db,
         model_name=model_name,
         reembed_model_mismatches=reembed_model_mismatches,
@@ -175,13 +171,13 @@ def _enqueue_source_embedding_job(
     job_id = _build_job_id("emb", requested_at)
     batch_size = resolve_source_embedding_batch_size()
     batches = [
-        candidates[start : start + batch_size]
-        for start in range(0, len(candidates), batch_size)
+        candidate_ids[start : start + batch_size]
+        for start in range(0, len(candidate_ids), batch_size)
     ]
     tasks_total = len(batches)
     status = (
         WorkerJobStatus.COMPLETED
-        if not candidates
+        if not candidate_ids
         else WorkerJobStatus.QUEUED
     )
 
@@ -195,45 +191,37 @@ def _enqueue_source_embedding_job(
             requested_at=requested_at,
             status=status.value,
             task_total=tasks_total,
-            item_total=len(candidates),
+            item_total=len(candidate_ids),
         )
-        if candidates:
-            payloads = [
-                {
-                    "job_id": job_id,
-                    "requested_at": requested_at.isoformat(),
-                    "embedding_model_name": model_name,
-                    "sources": [
-                        RssSourceEmbeddingPayloadSchema(
-                            id=candidate.article_id,
-                            title=candidate.title,
-                            summary=candidate.summary,
-                            url=candidate.url,
-                        ).model_dump(mode="json")
-                        for candidate in batch
-                    ],
-                }
-                for batch in batches
-            ]
+        task_ids: list[int] = []
+        if candidate_ids:
             task_ids = enqueue_worker_tasks(
                 workers_db,
                 job_id=job_id,
                 task_type="embed.source",
                 worker_version=None,
                 requested_at=requested_at,
-                payloads=payloads,
+                ref_batches=[[int(article_id) for article_id in batch] for batch in batches],
                 item_counts=[len(batch) for batch in batches],
             )
-            redis_payloads = [
-                {**payload, "task_id": task_id}
-                for payload, task_id in zip(payloads, task_ids, strict=True)
-            ]
-            RedisEmbeddingQueueClient().enqueue_embedding_messages(redis_payloads)
         if commit:
             workers_db.commit()
     except Exception as exception:
         workers_db.rollback()
         raise JobEnqueueError(f"Unable to enqueue source embedding job: {exception}") from exception
+
+    if commit and task_ids:
+        try:
+            RedisEmbeddingQueueClient().enqueue_embedding_task_ids(task_ids)
+        except Exception:
+            logger.exception(
+                "Unable to enqueue embedding task ids in Redis after DB commit; reconciler will retry",
+                extra={
+                    "job_id": job_id,
+                    "task_count": len(task_ids),
+                    "lease_seconds": resolve_embed_task_lease_seconds(),
+                },
+            )
 
     return JobEnqueueRead(
         job_id=job_id,
@@ -241,7 +229,7 @@ def _enqueue_source_embedding_job(
         status=status,
         worker_version=None,
         tasks_total=tasks_total,
-        items_total=len(candidates),
+        items_total=len(candidate_ids),
     )
 
 

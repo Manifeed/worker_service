@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-import json
 from typing import Any
+
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -19,6 +19,15 @@ TASK_KIND_SOURCE_EMBEDDING = "source_embedding"
 WORKER_TYPE_RSS_SCRAPPER = "rss_scrapper"
 WORKER_TYPE_SOURCE_EMBEDDING = "source_embedding"
 
+RUNTIME_COUNTER_STALE_REDIS_TASK_IDS_DROPPED = "stale_redis_task_ids_dropped"
+RUNTIME_COUNTER_EMBEDDING_TASKS_REQUEUED = "embedding_tasks_requeued"
+RUNTIME_COUNTER_PAYLOAD_REBUILD_FAILURES = "payload_rebuild_failures"
+_KNOWN_RUNTIME_COUNTERS = (
+    RUNTIME_COUNTER_STALE_REDIS_TASK_IDS_DROPPED,
+    RUNTIME_COUNTER_EMBEDDING_TASKS_REQUEUED,
+    RUNTIME_COUNTER_PAYLOAD_REBUILD_FAILURES,
+)
+
 
 @dataclass(frozen=True)
 class WorkerJobTaskClaimRow:
@@ -26,9 +35,10 @@ class WorkerJobTaskClaimRow:
     execution_id: int
     job_id: str
     requested_at: datetime
-    payload: dict[str, Any]
+    ref_ids: list[int]
     worker_version: str | None
     task_type: str
+    item_total: int
 
 
 @dataclass(frozen=True)
@@ -36,11 +46,15 @@ class WorkerJobTaskRecord:
     task_id: int
     execution_id: int
     job_id: str
+    task_type: str
     status: str
     claim_expires_at: datetime | None
     worker_version: str | None
-    payload: dict[str, Any]
+    ref_ids: list[int]
     item_total: int
+    attempt_count: int
+    last_error: str | None
+    claim_owner: str | None
 
 
 @dataclass(frozen=True)
@@ -220,15 +234,18 @@ def enqueue_worker_tasks(
     task_type: str,
     worker_version: str | None,
     requested_at: datetime,
-    payloads: list[dict[str, Any]],
+    ref_batches: list[list[int]],
     item_counts: list[int],
 ) -> list[int]:
-    if not payloads:
+    if not ref_batches:
         return []
-    if len(payloads) != len(item_counts):
-        raise ValueError("payloads and item_counts length mismatch")
+    if len(ref_batches) != len(item_counts):
+        raise ValueError("ref_batches and item_counts length mismatch")
     task_ids: list[int] = []
-    for payload, item_count in zip(payloads, item_counts, strict=True):
+    for ref_batch, item_count in zip(ref_batches, item_counts, strict=True):
+        normalized_ref_ids = [int(value) for value in ref_batch if int(value) > 0]
+        if not normalized_ref_ids:
+            raise ValueError("worker task ref batch cannot be empty")
         task_id = db.execute(
             text(
                 """
@@ -236,7 +253,7 @@ def enqueue_worker_tasks(
                     job_id,
                     task_type,
                     worker_version,
-                    payload,
+                    ref_ids,
                     requested_at,
                     status,
                     attempt_count,
@@ -247,7 +264,7 @@ def enqueue_worker_tasks(
                     :job_id,
                     :task_type,
                     :worker_version,
-                    CAST(:payload AS JSONB),
+                    CAST(:ref_ids AS BIGINT[]),
                     :requested_at,
                     'pending',
                     0,
@@ -262,9 +279,9 @@ def enqueue_worker_tasks(
                 "job_id": job_id,
                 "task_type": task_type,
                 "worker_version": worker_version,
-                "payload": json.dumps(payload, ensure_ascii=True, separators=(",", ":")),
+                "ref_ids": normalized_ref_ids,
                 "requested_at": requested_at,
-                "item_total": max(0, int(item_count)),
+                "item_total": max(1, int(item_count)),
             },
         ).scalar_one()
         task_ids.append(int(task_id))
@@ -278,6 +295,7 @@ def claim_worker_tasks(
     worker_version: str | None,
     task_count: int,
     lease_seconds: int,
+    claim_owner: str,
 ) -> list[WorkerJobTaskClaimRow]:
     filters = [
         "task.task_type = :task_type",
@@ -287,6 +305,7 @@ def claim_worker_tasks(
         "task_type": task_type,
         "task_count": max(1, int(task_count)),
         "lease_seconds": max(30, int(lease_seconds)),
+        "claim_owner": claim_owner[:255],
     }
     if worker_version is not None:
         filters.append("COALESCE(task.worker_version, '') = :worker_version")
@@ -314,8 +333,11 @@ def claim_worker_tasks(
                         status = 'processing',
                         claimed_at = now(),
                         claim_expires_at = now() + (:lease_seconds * interval '1 second'),
+                        completed_at = NULL,
                         attempt_count = task.attempt_count + 1,
-                        execution_id = nextval('worker_task_execution_id_seq')
+                        execution_id = nextval('worker_task_execution_id_seq'),
+                        last_error = NULL,
+                        claim_owner = :claim_owner
                     FROM candidate
                     WHERE task.task_id = candidate.task_id
                     RETURNING
@@ -323,18 +345,20 @@ def claim_worker_tasks(
                         task.execution_id,
                         task.job_id,
                         task.requested_at,
-                        task.payload,
+                        task.ref_ids,
                         task.worker_version,
-                        task.task_type
+                        task.task_type,
+                        task.item_total
                 )
                 SELECT
                     claimed.task_id,
                     claimed.execution_id,
                     claimed.job_id,
                     claimed.requested_at,
-                    claimed.payload,
+                    claimed.ref_ids,
                     claimed.worker_version,
-                    claimed.task_type
+                    claimed.task_type,
+                    claimed.item_total
                 FROM claimed
                 ORDER BY claimed.task_id ASC
                 """
@@ -350,13 +374,10 @@ def claim_worker_tasks(
             execution_id=int(row["execution_id"]),
             job_id=str(row["job_id"]),
             requested_at=row["requested_at"],
-            payload=dict(row["payload"] or {}),
-            worker_version=(
-                str(row["worker_version"])
-                if row["worker_version"] is not None
-                else None
-            ),
+            ref_ids=_coerce_ref_ids(row["ref_ids"]),
+            worker_version=(str(row["worker_version"]) if row["worker_version"] is not None else None),
             task_type=str(row["task_type"]),
+            item_total=int(row["item_total"] or 0),
         )
         for row in rows
     ]
@@ -375,11 +396,15 @@ def get_worker_task_record(
                     task.task_id,
                     task.execution_id,
                     task.job_id,
+                    task.task_type,
                     task.status,
                     task.claim_expires_at,
                     task.worker_version,
-                    task.payload,
-                    task.item_total
+                    task.ref_ids,
+                    task.item_total,
+                    task.attempt_count,
+                    task.last_error,
+                    task.claim_owner
                 FROM worker_tasks AS task
                 WHERE task.task_id = :task_id
                 """
@@ -395,15 +420,15 @@ def get_worker_task_record(
         task_id=int(row["task_id"]),
         execution_id=int(row["execution_id"] or 0),
         job_id=str(row["job_id"]),
+        task_type=str(row["task_type"]),
         status=str(row["status"]),
         claim_expires_at=row["claim_expires_at"],
-        worker_version=(
-            str(row["worker_version"])
-            if row["worker_version"] is not None
-            else None
-        ),
-        payload=dict(row["payload"] or {}),
+        worker_version=(str(row["worker_version"]) if row["worker_version"] is not None else None),
+        ref_ids=_coerce_ref_ids(row["ref_ids"]),
         item_total=int(row["item_total"] or 0),
+        attempt_count=int(row["attempt_count"] or 0),
+        last_error=(str(row["last_error"]) if row["last_error"] is not None else None),
+        claim_owner=(str(row["claim_owner"]) if row["claim_owner"] is not None else None),
     )
 
 
@@ -428,7 +453,9 @@ def mark_worker_task_completed(
                 claim_expires_at = NULL,
                 completed_at = now(),
                 item_success = :item_success,
-                item_error = :item_error
+                item_error = :item_error,
+                last_error = NULL,
+                claim_owner = NULL
             WHERE task_id = :task_id
                 AND execution_id = :execution_id
                 AND status = 'processing'
@@ -454,7 +481,7 @@ def mark_worker_task_failed(
     error_message: str,
     item_error: int,
 ) -> bool:
-    del trace_id, lease_id, error_message
+    del trace_id, lease_id
     result = db.execute(
         text(
             """
@@ -465,7 +492,9 @@ def mark_worker_task_failed(
                 claim_expires_at = NULL,
                 completed_at = now(),
                 item_success = 0,
-                item_error = :item_error
+                item_error = :item_error,
+                last_error = :last_error,
+                claim_owner = NULL
             WHERE task_id = :task_id
                 AND execution_id = :execution_id
                 AND status = 'processing'
@@ -475,6 +504,7 @@ def mark_worker_task_failed(
             "task_id": task_id,
             "execution_id": execution_id,
             "item_error": max(0, int(item_error)),
+            "last_error": error_message[:2000],
         },
     )
     return result.rowcount > 0
@@ -565,7 +595,8 @@ def requeue_processing_tasks_for_job(
             SET
                 status = 'pending',
                 claimed_at = NULL,
-                claim_expires_at = NULL
+                claim_expires_at = NULL,
+                claim_owner = NULL
             WHERE job_id = :job_id
                 AND status = 'processing'
             """
@@ -588,7 +619,8 @@ def cancel_active_tasks_for_job(
                 status = 'cancelled',
                 claimed_at = NULL,
                 claim_expires_at = NULL,
-                completed_at = COALESCE(completed_at, now())
+                completed_at = COALESCE(completed_at, now()),
+                claim_owner = NULL
             WHERE job_id = :job_id
                 AND status IN ('pending', 'processing')
             """
@@ -681,11 +713,7 @@ def get_worker_job_status_read(
         job_id=str(row["job_id"]),
         job_kind=str(row["job_kind"]),  # type: ignore[arg-type]
         status=str(row["status"]),  # type: ignore[arg-type]
-        worker_version=(
-            str(row["worker_version"])
-            if row["worker_version"] is not None
-            else None
-        ),
+        worker_version=(str(row["worker_version"]) if row["worker_version"] is not None else None),
         requested_at=row["requested_at"],
         started_at=row["started_at"],
         finished_at=row["finished_at"],
@@ -745,10 +773,14 @@ def list_worker_job_tasks(
                 """
                 SELECT
                     task_id,
+                    NULLIF(execution_id, 0) AS execution_id,
                     status,
                     claimed_at,
                     completed_at,
                     claim_expires_at,
+                    attempt_count,
+                    last_error,
+                    claim_owner,
                     item_total,
                     item_success,
                     item_error
@@ -763,6 +795,101 @@ def list_worker_job_tasks(
         .all()
     )
     return [dict(row) for row in rows]
+
+
+def count_pending_worker_tasks(
+    db: Session,
+    *,
+    task_type: str,
+) -> int:
+    return int(
+        db.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM worker_tasks
+                WHERE task_type = :task_type
+                    AND status = 'pending'
+                """
+            ),
+            {"task_type": task_type},
+        ).scalar_one()
+        or 0
+    )
+
+
+def count_expired_worker_claims(db: Session) -> int:
+    return int(
+        db.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM worker_tasks AS task
+                JOIN worker_jobs AS job
+                    ON job.job_id = task.job_id
+                WHERE task.status = 'processing'
+                    AND task.claim_expires_at IS NOT NULL
+                    AND task.claim_expires_at < now()
+                    AND job.status IN ('queued', 'processing')
+                """
+            )
+        ).scalar_one()
+        or 0
+    )
+
+
+def increment_worker_runtime_counter(
+    db: Session,
+    *,
+    counter_name: str,
+    amount: int = 1,
+) -> None:
+    normalized_amount = int(amount)
+    if counter_name not in _KNOWN_RUNTIME_COUNTERS or normalized_amount <= 0:
+        return
+    db.execute(
+        text(
+            """
+            INSERT INTO worker_runtime_counters (
+                counter_name,
+                counter_value,
+                updated_at
+            ) VALUES (
+                :counter_name,
+                :counter_value,
+                now()
+            )
+            ON CONFLICT (counter_name) DO UPDATE SET
+                counter_value = worker_runtime_counters.counter_value + EXCLUDED.counter_value,
+                updated_at = now()
+            """
+        ),
+        {
+            "counter_name": counter_name,
+            "counter_value": normalized_amount,
+        },
+    )
+
+
+def read_worker_runtime_counter_values(db: Session) -> dict[str, int]:
+    rows = (
+        db.execute(
+            text(
+                """
+                SELECT counter_name, counter_value
+                FROM worker_runtime_counters
+                WHERE counter_name = ANY(:counter_names)
+                """
+            ),
+            {"counter_names": list(_KNOWN_RUNTIME_COUNTERS)},
+        )
+        .mappings()
+        .all()
+    )
+    values = {name: 0 for name in _KNOWN_RUNTIME_COUNTERS}
+    for row in rows:
+        values[str(row["counter_name"])] = int(row["counter_value"] or 0)
+    return values
 
 
 def _resolve_worker_job_status(snapshot: WorkerJobProgressSnapshot) -> str:
@@ -825,3 +952,15 @@ def _update_worker_job_status_row(
             "item_error": snapshot.item_error,
         },
     )
+
+def _coerce_ref_ids(raw_ref_ids: object) -> list[int]:
+    if not isinstance(raw_ref_ids, list):
+        return []
+    normalized: list[int] = []
+    for value in raw_ref_ids:
+        if value is None:
+            continue
+        normalized_value = int(value)
+        if normalized_value > 0:
+            normalized.append(normalized_value)
+    return normalized

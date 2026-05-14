@@ -24,6 +24,7 @@ from app.services.worker_auth_service import (
 )
 
 from database import (
+    get_content_read_db_session,
     get_content_write_db_session,
     get_identity_read_db_session,
     get_workers_write_db_session,
@@ -46,9 +47,10 @@ def open_session_for_worker(
 def claim_tasks_for_worker(
     payload: WorkerTaskClaimRequestSchema,
     worker: AuthenticatedWorkerContext = Depends(require_authenticated_worker_context),
+    content_db: Session = Depends(get_content_read_db_session),
     workers_db: Session = Depends(get_workers_write_db_session),
 ) -> list[WorkerLeaseRead]:
-    return claim_worker_session_tasks(workers_db, worker=worker, payload=payload)
+    return claim_worker_session_tasks(content_db, workers_db, worker=worker, payload=payload)
 
 
 @worker_gateway_router.post("/tasks/complete", response_model=WorkerTaskCommandRead)

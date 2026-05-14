@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any
-
 import redis
 
 from app.domain.source_embedding_config import resolve_embedding_redis_queue_name
@@ -19,14 +17,15 @@ class RedisEmbeddingQueueClient:
         self.queue_name = resolve_embedding_redis_queue_name()
         self._client = redis.Redis.from_url(redis_url, decode_responses=True)
 
-    def enqueue_embedding_messages(self, payloads: list[dict[str, Any]]) -> int:
-        if not payloads:
+    def enqueue_embedding_task_ids(self, task_ids: list[int]) -> int:
+        normalized_task_ids = [int(task_id) for task_id in task_ids if int(task_id) > 0]
+        if not normalized_task_ids:
             return 0
         try:
             encoded_payloads = [
-                json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
-                for payload in payloads
+                json.dumps({"task_id": task_id}, ensure_ascii=True, separators=(",", ":"))
+                for task_id in normalized_task_ids
             ]
             return int(self._client.rpush(self.queue_name, *encoded_payloads))
         except redis.RedisError as exception:
-            raise RedisEmbeddingQueueError("Unable to enqueue embedding Redis messages") from exception
+            raise RedisEmbeddingQueueError("Unable to enqueue embedding Redis task ids") from exception

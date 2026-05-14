@@ -12,8 +12,8 @@ _TAG_VERSION = re.compile(r"^v?(\d+\.\d+\.\d+)")
 
 def resolve_active_rss_worker_version() -> str | None:
     """
-    Latest crawler_rss semver from GitHub releases (tag_name), for admin metrics only.
-    Falls back to None if GitHub is unreachable (caller uses RSS_WORKER_VERSION env).
+    Latest crawler_rss semver from GitHub releases (tag_name), used to target
+    the currently published worker artifact line.
     """
     repo = os.getenv(_RSS_WORKER_GITHUB_REPO_ENV, _DEFAULT_REPO).strip() or _DEFAULT_REPO
     url = f"https://api.github.com/repos/{repo}/releases/latest"

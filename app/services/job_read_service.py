@@ -86,10 +86,14 @@ def _build_job_overview_item_read(row) -> JobOverviewItemRead:
 def _build_job_task_read(row) -> JobTaskRead:
     return JobTaskRead(
         task_id=int(row["task_id"]),
+        execution_id=(int(row["execution_id"]) if row["execution_id"] is not None else None),
         status=str(row["status"]),  # type: ignore[arg-type]
         claimed_at=row["claimed_at"],
         completed_at=row["completed_at"],
         claim_expires_at=row["claim_expires_at"],
+        attempt_count=int(row["attempt_count"] or 0),
+        last_error=(str(row["last_error"]) if row["last_error"] is not None else None),
+        claim_owner=(str(row["claim_owner"]) if row["claim_owner"] is not None else None),
         item_total=int(row["item_total"] or 0),
         item_success=int(row["item_success"] or 0),
         item_error=int(row["item_error"] or 0),
