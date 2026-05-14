@@ -25,6 +25,7 @@ def _build_test_client() -> TestClient:
             api_key_secret_hash="secret-hash",
         )
     )
+    app.dependency_overrides[worker_gateway_router_module.get_content_read_db_session] = lambda: object()
     app.dependency_overrides[worker_gateway_router_module.get_identity_read_db_session] = lambda: object()
     app.dependency_overrides[worker_gateway_router_module.get_workers_write_db_session] = lambda: object()
     app.dependency_overrides[worker_gateway_router_module.get_content_write_db_session] = lambda: object()
@@ -58,8 +59,8 @@ def test_open_session_accepts_flat_worker_payload(monkeypatch) -> None:
 
 
 def test_claim_tasks_accepts_flat_worker_payload(monkeypatch) -> None:
-    def fake_claim_worker_session_tasks(workers_db, *, worker, payload):
-        del workers_db, worker
+    def fake_claim_worker_session_tasks(content_db, workers_db, *, worker, payload):
+        del content_db, workers_db, worker
         return [
             WorkerLeaseRead(
                 lease_id="lease_123",

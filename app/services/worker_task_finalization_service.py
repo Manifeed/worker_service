@@ -25,7 +25,7 @@ class ClaimedWorkerTaskContext:
     execution_id: int
     job_id: str
     worker_version: str | None
-    payload: dict
+    ref_ids: list[int]
     item_total: int
 
 
@@ -45,7 +45,7 @@ def require_claimed_worker_task(
         execution_id=task_record.execution_id,
         job_id=task_record.job_id,
         worker_version=task_record.worker_version,
-        payload=task_record.payload,
+        ref_ids=task_record.ref_ids,
         item_total=task_record.item_total,
     )
 
@@ -115,7 +115,7 @@ def _require_active_execution(
     if task_record.status != "processing":
         raise WorkerTaskStateError(
             f"{task_label} task {task_record.task_id} is not currently processing"
-    )
+        )
     if (
         task_record.claim_expires_at is not None
         and normalize_datetime_to_utc(task_record.claim_expires_at) < datetime.now(timezone.utc)

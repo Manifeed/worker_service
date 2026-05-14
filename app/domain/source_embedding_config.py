@@ -29,6 +29,18 @@ def resolve_source_embedding_batch_size() -> int:
     return DEFAULT_SOURCE_EMBEDDING_BATCH_SIZE
 
 
+def resolve_embed_task_lease_seconds() -> int:
+    raw_value = os.getenv("EMBED_TASK_LEASE_SECONDS", "").strip()
+    if raw_value:
+        try:
+            parsed = int(raw_value)
+        except ValueError:
+            parsed = 900
+        if parsed >= 30:
+            return parsed
+    return 900
+
+
 def resolve_source_embedding_dimensions() -> int | None:
     raw_value = os.getenv("SOURCE_EMBEDDING_DIMENSIONS", "").strip()
     if not raw_value:

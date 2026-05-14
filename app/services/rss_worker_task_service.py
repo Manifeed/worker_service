@@ -32,14 +32,12 @@ def complete_rss_task(
         task_label="RSS",
     )
 
-    expected_feed_ids = {
-        int(feed["feed_id"])
-        for feed in task.payload.get("feeds", [])
-        if isinstance(feed, dict) and feed.get("feed_id") is not None
-    }
+    expected_feed_ids = {int(feed_id) for feed_id in task.ref_ids if int(feed_id) > 0}
+    if not expected_feed_ids:
+        raise WorkerProtocolError(f"RSS task {task_id} has no feed refs to validate")
     seen_feed_ids: set[int] = set()
     for result_event in result_payload.result_events:
-        if result_event.job_id != task.payload.get("job_id"):
+        if result_event.job_id != task.job_id:
             raise WorkerProtocolError(
                 f"RSS task {task_id} completed with unexpected job_id {result_event.job_id}"
             )

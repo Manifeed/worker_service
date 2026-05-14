@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from shared_backend.schemas.workers.worker_release_schema import WorkerPingRead
+from shared_backend.schemas.workers.worker_ping_schema import WorkerPingRead
 from app.services.worker_auth_service import AuthenticatedWorkerContext
 
 

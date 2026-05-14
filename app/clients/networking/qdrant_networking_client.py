@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import NAMESPACE_URL, uuid5
 import httpx
 
@@ -14,6 +14,72 @@ from app.domain.source_embedding_config import (
 _ENSURED_COLLECTIONS: dict[str, int] = {}
 
 
+def _published_at_to_unix_seconds(value: datetime | None) -> int | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        normalized = value.replace(tzinfo=UTC)
+    else:
+        normalized = value.astimezone(UTC)
+    return int(normalized.timestamp())
+
+
+def _parse_qdrant_published_at(value: object) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        try:
+            return datetime.fromtimestamp(float(value), tz=UTC)
+        except (OSError, OverflowError, ValueError):
+            return None
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(UTC)
+    return None
+
+
+def _parse_payload_feeds(raw: object) -> list[dict[str, object]]:
+    if not isinstance(raw, list):
+        return []
+    feeds: list[dict[str, object]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        feed_id = item.get("id")
+        if not isinstance(feed_id, int):
+            continue
+        section = item.get("section")
+        feeds.append(
+            {
+                "id": feed_id,
+                "section": (str(section) if section is not None else None),
+            }
+        )
+    return feeds
+
+
+def _parse_payload_authors(raw: object) -> list[dict[str, object]]:
+    if not isinstance(raw, list):
+        return []
+    authors: list[dict[str, object]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        author_id = item.get("id")
+        if not isinstance(author_id, int):
+            continue
+        name = item.get("name")
+        authors.append({"id": author_id, "name": str(name) if name is not None else ""})
+    return authors
+
+
 class QdrantIndexingError(RuntimeError):
     """Raised when a Qdrant operation fails."""
 
@@ -23,19 +89,16 @@ class QdrantArticleEmbeddingPointRead:
     point_id: str
     article_id: int | None
     article_key: str
-    worker_version: str
     company_id: int | None
     company: str | None
     country: str
-    published_at: str | None
+    published_at: datetime | None
     url: str | None
     title: str | None
     summary: str | None
-    feed_ids: list[int]
-    feeds: list[dict]
-    author_ids: list[int]
-    authors: list[str]
-    images_url: list[str]
+    feeds: list[dict[str, object]]
+    authors: list[dict[str, object]]
+    img_url: str | None
     vector: list[float]
 
 
@@ -44,7 +107,6 @@ class QdrantArticleEmbeddingPointSummaryRead:
     point_id: str
     article_id: int | None
     article_key: str | None
-    worker_version: str | None
 
 
 @dataclass(frozen=True)
@@ -53,7 +115,7 @@ class QdrantScoredArticleEmbeddingPointRead:
     score: float
     article_id: int | None
     article_key: str | None
-    worker_version: str | None
+    published_at: datetime | None = None
 
 
 class SimpleQdrantClient:
@@ -77,11 +139,9 @@ class SimpleQdrantClient:
         company: str | None,
         country: str | None,
         published_at: datetime | None,
-        feed_ids: list[int],
-        feeds: list[dict],
-        author_ids: list[int],
-        authors: list[str],
-        images_url: list[str],
+        feeds: list[dict[str, object]],
+        authors: list[dict[str, object]],
+        img_url: str | None,
     ) -> str:
         dimensions = len(vector)
         self._ensure_collection(dimensions=dimensions)
@@ -92,23 +152,16 @@ class SimpleQdrantClient:
         payload = {
             "article_id": article_id,
             "article_key": article_key,
-            "worker_version": worker_version,
             "url": url,
             "title": title,
             "summary": summary,
             "company_id": company_id,
             "company": company,
             "country": _normalize_country(country),
-            "published_at": (
-                published_at.isoformat()
-                if published_at is not None
-                else None
-            ),
-            "feed_ids": feed_ids,
+            "published_at": _published_at_to_unix_seconds(published_at),
             "feeds": feeds,
-            "author_ids": author_ids,
             "authors": authors,
-            "images_url": images_url,
+            "img_url": img_url,
         }
         response = self._request(
             method="PUT",
@@ -158,6 +211,8 @@ class SimpleQdrantClient:
                 f"Unable to read embedding point {point_id}: vector missing from payload"
             )
         vector = [float(value) for value in raw_vector]
+        img_raw = payload.get("img_url")
+        img_url = str(img_raw) if img_raw is not None else None
         return QdrantArticleEmbeddingPointRead(
             point_id=str(point.get("id") or point_id),
             article_id=(
@@ -166,47 +221,20 @@ class SimpleQdrantClient:
                 else None
             ),
             article_key=str(payload.get("article_key") or article_key),
-            worker_version=str(payload.get("worker_version") or worker_version),
             company_id=(
                 int(payload["company_id"])
                 if payload.get("company_id") is not None
                 else None
             ),
             country=_normalize_country(payload.get("country")),
-            published_at=(
-                str(payload["published_at"])
-                if payload.get("published_at") is not None
-                else None
-            ),
+            published_at=_parse_qdrant_published_at(payload.get("published_at")),
             company=(str(payload["company"]) if payload.get("company") is not None else None),
             url=(str(payload["url"]) if payload.get("url") is not None else None),
             title=(str(payload["title"]) if payload.get("title") is not None else None),
             summary=(str(payload["summary"]) if payload.get("summary") is not None else None),
-            feed_ids=[
-                int(feed_id)
-                for feed_id in (payload.get("feed_ids") or [])
-                if isinstance(feed_id, int)
-            ],
-            feeds=[
-                dict(feed)
-                for feed in (payload.get("feeds") or [])
-                if isinstance(feed, dict)
-            ],
-            author_ids=[
-                int(author_id)
-                for author_id in (payload.get("author_ids") or [])
-                if isinstance(author_id, int)
-            ],
-            authors=[
-                str(author)
-                for author in (payload.get("authors") or [])
-                if isinstance(author, str)
-            ],
-            images_url=[
-                str(image_url)
-                for image_url in (payload.get("images_url") or [])
-                if isinstance(image_url, str)
-            ],
+            feeds=_parse_payload_feeds(payload.get("feeds")),
+            authors=_parse_payload_authors(payload.get("authors")),
+            img_url=img_url,
             vector=vector,
         )
 
@@ -257,11 +285,6 @@ class SimpleQdrantClient:
                     if payload.get("article_key") is not None
                     else None
                 ),
-                worker_version=(
-                    str(payload["worker_version"])
-                    if payload.get("worker_version") is not None
-                    else None
-                ),
             )
             for point in points
         ]
@@ -305,11 +328,7 @@ class SimpleQdrantClient:
                     if payload.get("article_key") is not None
                     else None
                 ),
-                worker_version=(
-                    str(payload["worker_version"])
-                    if payload.get("worker_version") is not None
-                    else None
-                ),
+                published_at=_parse_qdrant_published_at(payload.get("published_at")),
             )
             for point in points
         ]
@@ -385,10 +404,8 @@ class SimpleQdrantClient:
     def _ensure_payload_indexes(self) -> None:
         for field_name, field_schema in (
             ("country", "keyword"),
-            ("published_at", "datetime"),
-            ("feed_ids", "integer"),
+            ("published_at", "integer"),
             ("company_id", "integer"),
-            ("author_ids", "integer"),
         ):
             response = self._request(
                 method="PUT",

@@ -25,6 +25,7 @@ from app.schemas.workers.worker_gateway_schema import (
     WorkerTaskFailRequestSchema,
 )
 from app.schemas.workers.worker_rss_result_schema import WorkerRssTaskResultPayloadSchema
+from app.clients.database.rss_scrape_job_database_client import list_rss_feed_scrape_payloads_by_ordered_ids
 from app.domain.worker_gateway_signature import (
     format_worker_gateway_timestamp,
     generate_worker_gateway_id,
@@ -35,7 +36,11 @@ from app.domain.worker_gateway_signature import (
     verify_worker_gateway_signature,
 )
 from app.clients.database.worker_job_database_client import (
+    RUNTIME_COUNTER_PAYLOAD_REBUILD_FAILURES,
     claim_worker_tasks as claim_worker_task_rows,
+    increment_worker_runtime_counter,
+    mark_worker_task_failed,
+    refresh_worker_job_status,
 )
 from app.clients.database.worker_gateway_database_client import (
     WorkerLeaseRecord,
@@ -102,6 +107,7 @@ def open_worker_session(
 
 
 def claim_worker_session_tasks(
+    content_db: Session,
     workers_db: Session,
     *,
     worker: AuthenticatedWorkerContext,
@@ -114,7 +120,12 @@ def claim_worker_session_tasks(
         task_type=payload.task_type,
         worker_version=payload.worker_version,
     )
-    claimed_tasks = _claim_tasks(workers_db, payload=payload)
+    claimed_tasks = _claim_tasks(
+        content_db,
+        workers_db,
+        worker=worker,
+        payload=payload,
+    )
     lease_reads: list[WorkerLeaseRead] = []
     for task in claimed_tasks:
         lease_id = generate_worker_gateway_id("lease")
@@ -303,22 +314,51 @@ def fail_worker_session_task(
     return job_id_to_finalize
 
 
-def _claim_tasks(db: Session, *, payload: WorkerTaskClaimRequestSchema) -> list[ClaimedTaskRead]:
+def _claim_tasks(
+    content_db: Session,
+    db: Session,
+    *,
+    worker: AuthenticatedWorkerContext,
+    payload: WorkerTaskClaimRequestSchema,
+) -> list[ClaimedTaskRead]:
     claimed_rows = claim_worker_task_rows(
         db,
         task_type=payload.task_type,
         worker_version=payload.worker_version,
         task_count=payload.count,
         lease_seconds=payload.lease_seconds,
+        claim_owner=worker.worker_name,
     )
-    return [
-        ClaimedTaskRead(
-            task_id=row.task_id,
-            execution_id=row.execution_id,
-            payload=row.payload,
-        )
-        for row in claimed_rows
-    ]
+    claimed_tasks: list[ClaimedTaskRead] = []
+    for row in claimed_rows:
+        if _is_rss_task_type(row.task_type):
+            rss_payload = _rebuild_rss_claim_payload(content_db, row)
+            if rss_payload is None:
+                increment_worker_runtime_counter(
+                    db,
+                    counter_name=RUNTIME_COUNTER_PAYLOAD_REBUILD_FAILURES,
+                )
+                mark_worker_task_failed(
+                    db,
+                    task_id=row.task_id,
+                    execution_id=row.execution_id,
+                    trace_id=None,
+                    lease_id=None,
+                    error_message="stale_reference: unable to rebuild RSS payload from feed refs",
+                    item_error=row.item_total,
+                )
+                refresh_worker_job_status(db, job_id=row.job_id)
+                continue
+            claimed_tasks.append(
+                ClaimedTaskRead(
+                    task_id=row.task_id,
+                    execution_id=row.execution_id,
+                    payload=rss_payload,
+                )
+            )
+            continue
+        raise WorkerProtocolError(f"Unsupported worker task type: {row.task_type}")
+    return claimed_tasks
 
 
 def _complete_task(
@@ -569,4 +609,29 @@ def _build_fail_signature_payload(
         "signed_at": format_worker_gateway_timestamp(signed_at),
         "nonce": nonce,
         "error_message": error_message,
+    }
+
+
+def _rebuild_rss_claim_payload(
+    content_db: Session,
+    claimed_task: object,
+) -> dict[str, Any] | None:
+    row = claimed_task
+    feed_ids = getattr(row, "ref_ids", [])
+    if not feed_ids:
+        return None
+    feeds = list_rss_feed_scrape_payloads_by_ordered_ids(
+        content_db,
+        feed_ids=feed_ids,
+    )
+    if len(feeds) != len(feed_ids):
+        return None
+    if [int(feed.feed_id) for feed in feeds] != [int(feed_id) for feed_id in feed_ids]:
+        return None
+    return {
+        "job_id": getattr(row, "job_id"),
+        "requested_at": getattr(row, "requested_at").isoformat(),
+        "ingest": True,
+        "requested_by": "jobs.rss_scrape",
+        "feeds": [feed.model_dump(mode="json") for feed in feeds],
     }
