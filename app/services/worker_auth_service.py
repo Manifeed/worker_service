@@ -6,15 +6,15 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from app.clients.database.auth_database_client import get_user_api_key_context_by_hash
+from app.database import get_identity_read_db_session
 from shared_backend.errors.custom_exceptions import (
     ApiAccessDisabledError,
     InactiveUserError,
     InvalidWorkerApiKeyError,
     MissingWorkerBearerTokenError,
 )
-from app.domain.worker_identity import build_worker_name
-from app.utils.auth_utils import hash_secret_token
-from database import get_identity_read_db_session
+from shared_backend.domain.worker_identity import build_worker_name
+from shared_backend.utils.auth_utils import hash_secret_token
 
 _worker_bearer_scheme = HTTPBearer(auto_error=False)
 

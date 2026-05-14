@@ -1,20 +1,18 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any
+
 from sqlalchemy.orm import Session
 
 from app.clients.database.auth_database_client import (
     touch_user_api_key_last_used,
     upsert_api_key_worker_usage,
 )
-from shared_backend.errors.custom_exceptions import (
-    WorkerLeaseNotFoundError,
-    WorkerLeaseStateError,
-    WorkerProtocolError,
-    WorkerSessionNotFoundError,
-    WorkerSignatureError,
+from app.clients.database.worker_gateway_database_client import create_worker_session
+from app.domain.worker_gateway_signature import (
+    generate_worker_gateway_id,
+    hash_worker_gateway_signature,
+    utc_now,
 )
 from app.schemas.workers.worker_gateway_schema import (
     WorkerLeaseRead,
@@ -24,44 +22,27 @@ from app.schemas.workers.worker_gateway_schema import (
     WorkerTaskCompleteRequestSchema,
     WorkerTaskFailRequestSchema,
 )
-from app.schemas.workers.worker_rss_result_schema import WorkerRssTaskResultPayloadSchema
-from app.clients.database.rss_scrape_job_database_client import list_rss_feed_scrape_payloads_by_ordered_ids
-from app.domain.worker_gateway_signature import (
-    format_worker_gateway_timestamp,
-    generate_worker_gateway_id,
-    generate_worker_gateway_nonce,
-    hash_worker_gateway_signature,
-    sign_worker_gateway_payload,
-    utc_now,
-    verify_worker_gateway_signature,
-)
-from app.clients.database.worker_job_database_client import (
-    RUNTIME_COUNTER_PAYLOAD_REBUILD_FAILURES,
-    claim_worker_tasks as claim_worker_task_rows,
-    increment_worker_runtime_counter,
-    mark_worker_task_failed,
-    refresh_worker_job_status,
-)
-from app.clients.database.worker_gateway_database_client import (
-    WorkerLeaseRecord,
-    create_worker_lease,
-    create_worker_session,
-    get_worker_lease,
-    get_worker_session,
-    reserve_worker_lease_result,
-)
-from app.services.rss_worker_task_service import (
-    complete_rss_task,
-    fail_rss_task,
-)
 from app.services.worker_auth_service import AuthenticatedWorkerContext
-
-
-@dataclass(frozen=True)
-class ClaimedTaskRead:
-    task_id: int
-    execution_id: int
-    payload: dict[str, Any]
+from app.services.worker_gateway_access_service import (
+    require_worker_lease,
+    require_worker_session,
+    reserve_or_confirm_lease_finalization,
+)
+from app.services.worker_gateway_lease_service import build_worker_lease_read
+from app.services.worker_gateway_signature_service import (
+    build_fail_signature_payload,
+    build_result_signature_payload,
+    parse_payload_ref,
+    resolve_signature_result_payload,
+    resolve_worker_type_for_task,
+    verify_worker_signature,
+)
+from app.services.worker_gateway_task_service import (
+    claim_tasks,
+    complete_task,
+    fail_task,
+)
+from shared_backend.errors.custom_exceptions import WorkerProtocolError
 
 
 def open_worker_session(
@@ -71,7 +52,7 @@ def open_worker_session(
     worker: AuthenticatedWorkerContext,
     payload: WorkerSessionOpenRequestSchema,
 ) -> WorkerSessionOpenRead:
-    expected_worker_type = _resolve_worker_type_for_task(payload.task_type)
+    expected_worker_type = resolve_worker_type_for_task(payload.task_type)
     _require_worker_type(worker, expected_worker_type)
     session_id = generate_worker_gateway_id("ws")
     expires_at = utc_now() + timedelta(seconds=payload.session_ttl_seconds)
@@ -113,71 +94,25 @@ def claim_worker_session_tasks(
     worker: AuthenticatedWorkerContext,
     payload: WorkerTaskClaimRequestSchema,
 ) -> list[WorkerLeaseRead]:
-    session = _require_worker_session(
+    session = _require_active_session(
         workers_db,
         worker=worker,
         session_id=payload.session_id,
         task_type=payload.task_type,
         worker_version=payload.worker_version,
     )
-    claimed_tasks = _claim_tasks(
-        content_db,
-        workers_db,
-        worker=worker,
-        payload=payload,
-    )
+    claimed_tasks = claim_tasks(content_db, workers_db, worker=worker, payload=payload)
     lease_reads: list[WorkerLeaseRead] = []
     for task in claimed_tasks:
-        lease_id = generate_worker_gateway_id("lease")
-        trace_id = generate_worker_gateway_id("trace")
-        nonce = generate_worker_gateway_nonce()
-        signed_at = utc_now()
-        expires_at = signed_at + timedelta(seconds=payload.lease_seconds)
-        payload_ref = _build_payload_ref(
-            task_type=payload.task_type,
-            task_id=task.task_id,
-            execution_id=task.execution_id,
-        )
-        lease_signature_payload = _build_lease_signature_payload(
-            lease_id=lease_id,
-            trace_id=trace_id,
-            task_type=payload.task_type,
-            worker_version=payload.worker_version,
-            task_id=task.task_id,
-            execution_id=task.execution_id,
-            payload_ref=payload_ref,
-            payload=task.payload,
-            expires_at=expires_at,
-            signed_at=signed_at,
-            nonce=nonce,
-        )
-        signature = sign_worker_gateway_payload(
-            secret=worker.api_key_secret_hash,
-            payload=lease_signature_payload,
-        )
-        create_worker_lease(
-            workers_db,
-            lease_id=lease_id,
-            session_id=session.session_id,
-            task_type=payload.task_type,
-            payload_ref=payload_ref,
-            expires_at=expires_at,
-            signature_hash=hash_worker_gateway_signature(signature),
-        )
         lease_reads.append(
-            WorkerLeaseRead(
-                lease_id=lease_id,
-                trace_id=trace_id,
+            build_worker_lease_read(
+                workers_db,
+                session_id=session.session_id,
+                task=task,
                 task_type=payload.task_type,
                 worker_version=payload.worker_version,
-                task_id=task.task_id,
-                execution_id=task.execution_id,
-                payload_ref=payload_ref,
-                payload=task.payload,
-                expires_at=expires_at,
-                signed_at=signed_at,
-                nonce=nonce,
-                signature=signature,
+                worker_secret=worker.api_key_secret_hash,
+                lease_seconds=payload.lease_seconds,
             )
         )
     workers_db.commit()
@@ -194,25 +129,25 @@ def complete_worker_session_task(
 ) -> str | None:
     single_db_session = workers_db is None
     workers_db = workers_db or content_db
-    session = _require_worker_session(
+    session = _require_active_session(
         workers_db,
         worker=worker,
         session_id=payload.session_id,
         task_type=payload.task_type,
         worker_version=payload.worker_version,
     )
-    lease = _require_worker_lease(
+    lease = require_worker_lease(
         workers_db,
         session_id=session.session_id,
         lease_id=payload.lease_id,
         task_type=payload.task_type,
     )
-    signature_result_payload = _resolve_signature_result_payload(
+    signature_result_payload = resolve_signature_result_payload(
         task_type=payload.task_type,
         raw_request_body=raw_request_body,
         result_payload=payload.result_payload,
     )
-    signature_payload = _build_result_signature_payload(
+    signature_payload = build_result_signature_payload(
         session_id=payload.session_id,
         lease_id=payload.lease_id,
         trace_id=payload.trace_id,
@@ -222,21 +157,20 @@ def complete_worker_session_task(
         nonce=payload.nonce,
         result_payload=signature_result_payload,
     )
-    _verify_worker_signature(worker=worker, payload=signature_payload, signature=payload.signature)
-    result_signature_hash = hash_worker_gateway_signature(payload.signature)
-    finalization = _reserve_or_confirm_lease_finalization(
+    verify_worker_signature(worker=worker, payload=signature_payload, signature=payload.signature)
+    finalization = reserve_or_confirm_lease_finalization(
         workers_db,
         lease=lease,
         result_status="completed",
         result_nonce=payload.nonce,
-        result_signature_hash=result_signature_hash,
+        result_signature_hash=hash_worker_gateway_signature(payload.signature),
     )
     if not finalization:
         workers_db.rollback()
         return None
-    task_id, execution_id = _parse_payload_ref(lease.payload_ref)
+    task_id, execution_id = parse_payload_ref(lease.payload_ref)
     try:
-        job_id_to_finalize = _complete_task(
+        job_id_to_finalize = complete_task(
             content_db,
             workers_db,
             worker=worker,
@@ -263,20 +197,20 @@ def fail_worker_session_task(
     worker: AuthenticatedWorkerContext,
     payload: WorkerTaskFailRequestSchema,
 ) -> str | None:
-    session = _require_worker_session(
+    session = _require_active_session(
         workers_db,
         worker=worker,
         session_id=payload.session_id,
         task_type=payload.task_type,
         worker_version=payload.worker_version,
     )
-    lease = _require_worker_lease(
+    lease = require_worker_lease(
         workers_db,
         session_id=session.session_id,
         lease_id=payload.lease_id,
         task_type=payload.task_type,
     )
-    signature_payload = _build_fail_signature_payload(
+    signature_payload = build_fail_signature_payload(
         session_id=payload.session_id,
         lease_id=payload.lease_id,
         trace_id=payload.trace_id,
@@ -286,21 +220,20 @@ def fail_worker_session_task(
         nonce=payload.nonce,
         error_message=payload.error_message,
     )
-    _verify_worker_signature(worker=worker, payload=signature_payload, signature=payload.signature)
-    result_signature_hash = hash_worker_gateway_signature(payload.signature)
-    finalization = _reserve_or_confirm_lease_finalization(
+    verify_worker_signature(worker=worker, payload=signature_payload, signature=payload.signature)
+    finalization = reserve_or_confirm_lease_finalization(
         workers_db,
         lease=lease,
         result_status="failed",
         result_nonce=payload.nonce,
-        result_signature_hash=result_signature_hash,
+        result_signature_hash=hash_worker_gateway_signature(payload.signature),
     )
     if not finalization:
         workers_db.rollback()
         return None
-    task_id, execution_id = _parse_payload_ref(lease.payload_ref)
+    task_id, execution_id = parse_payload_ref(lease.payload_ref)
     try:
-        job_id_to_finalize = _fail_task(
+        job_id_to_finalize = fail_task(
             workers_db,
             worker=worker,
             payload=payload,
@@ -314,107 +247,7 @@ def fail_worker_session_task(
     return job_id_to_finalize
 
 
-def _claim_tasks(
-    content_db: Session,
-    db: Session,
-    *,
-    worker: AuthenticatedWorkerContext,
-    payload: WorkerTaskClaimRequestSchema,
-) -> list[ClaimedTaskRead]:
-    claimed_rows = claim_worker_task_rows(
-        db,
-        task_type=payload.task_type,
-        worker_version=payload.worker_version,
-        task_count=payload.count,
-        lease_seconds=payload.lease_seconds,
-        claim_owner=worker.worker_name,
-    )
-    claimed_tasks: list[ClaimedTaskRead] = []
-    for row in claimed_rows:
-        if _is_rss_task_type(row.task_type):
-            rss_payload = _rebuild_rss_claim_payload(content_db, row)
-            if rss_payload is None:
-                increment_worker_runtime_counter(
-                    db,
-                    counter_name=RUNTIME_COUNTER_PAYLOAD_REBUILD_FAILURES,
-                )
-                mark_worker_task_failed(
-                    db,
-                    task_id=row.task_id,
-                    execution_id=row.execution_id,
-                    trace_id=None,
-                    lease_id=None,
-                    error_message="stale_reference: unable to rebuild RSS payload from feed refs",
-                    item_error=row.item_total,
-                )
-                refresh_worker_job_status(db, job_id=row.job_id)
-                continue
-            claimed_tasks.append(
-                ClaimedTaskRead(
-                    task_id=row.task_id,
-                    execution_id=row.execution_id,
-                    payload=rss_payload,
-                )
-            )
-            continue
-        raise WorkerProtocolError(f"Unsupported worker task type: {row.task_type}")
-    return claimed_tasks
-
-
-def _complete_task(
-    content_db: Session,
-    workers_db: Session,
-    *,
-    worker: AuthenticatedWorkerContext,
-    payload: WorkerTaskCompleteRequestSchema,
-    task_id: int,
-    execution_id: int,
-) -> str | None:
-    if _is_rss_task_type(payload.task_type):
-        rss_result_payload = _validate_rss_worker_result_payload(payload.result_payload)
-        return complete_rss_task(
-            content_db,
-            workers_db,
-            worker_name=worker.worker_name,
-            task_id=task_id,
-            execution_id=execution_id,
-            trace_id=payload.trace_id,
-            lease_id=payload.lease_id,
-            result_payload=rss_result_payload,
-        )
-    raise WorkerProtocolError(f"Unsupported worker task type: {payload.task_type}")
-
-
-def _fail_task(
-    db: Session,
-    *,
-    worker: AuthenticatedWorkerContext,
-    payload: WorkerTaskFailRequestSchema,
-    task_id: int,
-    execution_id: int,
-) -> str | None:
-    if _is_rss_task_type(payload.task_type):
-        return fail_rss_task(
-            db,
-            task_id=task_id,
-            execution_id=execution_id,
-            trace_id=payload.trace_id,
-            lease_id=payload.lease_id,
-            error_message=payload.error_message,
-        )
-    raise WorkerProtocolError(f"Unsupported worker task type: {payload.task_type}")
-
-
-def _validate_rss_worker_result_payload(payload: dict[str, Any]) -> WorkerRssTaskResultPayloadSchema:
-    try:
-        return WorkerRssTaskResultPayloadSchema.model_validate(payload)
-    except Exception as exception:
-        raise WorkerProtocolError(
-            f"RSS completion payload does not match the frozen worker contract: {exception}"
-        ) from exception
-
-
-def _require_worker_session(
+def _require_active_session(
     db: Session,
     *,
     worker: AuthenticatedWorkerContext,
@@ -422,216 +255,17 @@ def _require_worker_session(
     task_type: str,
     worker_version: str | None,
 ):
-    expected_worker_type = _resolve_worker_type_for_task(task_type)
-    _require_worker_type(worker, expected_worker_type)
-    session = get_worker_session(db, session_id=session_id, api_key_id=worker.api_key_id)
-    if session is None:
-        raise WorkerSessionNotFoundError("Worker session does not exist")
-    if session.expires_at <= utc_now():
-        raise WorkerSessionNotFoundError("Worker session has expired")
-    if (session.worker_version or None) != (worker_version or None):
-        raise WorkerProtocolError("Worker version does not match the opened session")
-    return session
-
-
-def _require_worker_lease(db: Session, *, session_id: str, lease_id: str, task_type: str):
-    lease = get_worker_lease(db, lease_id=lease_id, session_id=session_id)
-    if lease is None:
-        raise WorkerLeaseNotFoundError("Worker lease does not exist")
-    if lease.task_type != task_type:
-        raise WorkerProtocolError("Worker lease task type does not match the request")
-    return lease
-
-
-def _reserve_or_confirm_lease_finalization(
-    db: Session,
-    *,
-    lease: WorkerLeaseRecord,
-    result_status: str,
-    result_nonce: str,
-    result_signature_hash: str,
-) -> bool:
-    if lease.result_nonce is not None:
-        if (
-            lease.result_status == result_status
-            and lease.result_nonce == result_nonce
-            and lease.result_signature_hash == result_signature_hash
-        ):
-            return False
-        raise WorkerLeaseStateError("Worker lease was already finalized with a different payload")
-    if lease.expires_at <= utc_now():
-        raise WorkerLeaseStateError(f"Worker lease {lease.lease_id} has expired")
-    reserved_lease = reserve_worker_lease_result(
+    expected_worker_type = resolve_worker_type_for_task(task_type)
+    return require_worker_session(
         db,
-        lease_id=lease.lease_id,
-        session_id=lease.session_id,
-        result_status=result_status,
-        result_nonce=result_nonce,
-        result_signature_hash=result_signature_hash,
+        worker=worker,
+        session_id=session_id,
+        task_type=task_type,
+        worker_version=worker_version,
+        expected_worker_type=expected_worker_type,
     )
-    if reserved_lease is not None:
-        return True
-
-    current_lease = _require_worker_lease(
-        db,
-        session_id=lease.session_id,
-        lease_id=lease.lease_id,
-        task_type=lease.task_type,
-    )
-    if (
-        current_lease.result_status == result_status
-        and current_lease.result_nonce == result_nonce
-        and current_lease.result_signature_hash == result_signature_hash
-    ):
-        return False
-    raise WorkerLeaseStateError("Worker lease was already finalized with a different payload")
-
-
-def _verify_worker_signature(*, worker: AuthenticatedWorkerContext, payload: dict[str, Any], signature: str) -> None:
-    is_valid = verify_worker_gateway_signature(
-        secret=worker.api_key_secret_hash,
-        payload=payload,
-        signature=signature,
-    )
-    if not is_valid:
-        raise WorkerSignatureError("Worker request signature is invalid")
-
-
-def _resolve_signature_result_payload(
-    *,
-    task_type: str,
-    raw_request_body: bytes | None,
-    result_payload: dict[str, Any],
-) -> dict[str, Any]:
-    del task_type, raw_request_body
-    return result_payload
-
-
-def _resolve_worker_type_for_task(task_type: str) -> str:
-    if _is_rss_task_type(task_type):
-        return "rss_scrapper"
-    raise WorkerProtocolError(f"Unsupported worker task type: {task_type}")
-
-
-def _is_rss_task_type(task_type: str) -> bool:
-    return task_type.startswith("rss.fetch")
 
 
 def _require_worker_type(worker: AuthenticatedWorkerContext, expected_worker_type: str) -> None:
     if worker.worker_type != expected_worker_type:
         raise WorkerProtocolError("Worker token cannot access this task type")
-
-
-def _build_payload_ref(*, task_type: str, task_id: int, execution_id: int) -> str:
-    task_namespace = "rss" if _is_rss_task_type(task_type) else "unknown"
-    return f"{task_namespace}:{task_id}:{execution_id}"
-
-
-def _parse_payload_ref(payload_ref: str) -> tuple[int, int]:
-    payload_ref_parts = payload_ref.split(":")
-    if len(payload_ref_parts) != 3:
-        raise WorkerProtocolError("Worker payload_ref format is invalid")
-    try:
-        return int(payload_ref_parts[1]), int(payload_ref_parts[2])
-    except ValueError as exception:
-        raise WorkerProtocolError("Worker payload_ref identifiers are invalid") from exception
-
-
-def _build_lease_signature_payload(
-    *,
-    lease_id: str,
-    trace_id: str,
-    task_type: str,
-    worker_version: str | None,
-    task_id: int,
-    execution_id: int,
-    payload_ref: str,
-    payload: dict[str, Any],
-    expires_at,
-    signed_at,
-    nonce: str,
-) -> dict[str, Any]:
-    return {
-        "lease_id": lease_id,
-        "trace_id": trace_id,
-        "task_type": task_type,
-        "worker_version": worker_version,
-        "task_id": task_id,
-        "execution_id": execution_id,
-        "payload_ref": payload_ref,
-        "payload": payload,
-        "expires_at": format_worker_gateway_timestamp(expires_at),
-        "signed_at": format_worker_gateway_timestamp(signed_at),
-        "nonce": nonce,
-    }
-
-
-def _build_result_signature_payload(
-    *,
-    session_id: str,
-    lease_id: str,
-    trace_id: str,
-    task_type: str,
-    worker_version: str | None,
-    signed_at,
-    nonce: str,
-    result_payload: dict[str, Any],
-) -> dict[str, Any]:
-    return {
-        "session_id": session_id,
-        "lease_id": lease_id,
-        "trace_id": trace_id,
-        "task_type": task_type,
-        "worker_version": worker_version,
-        "signed_at": format_worker_gateway_timestamp(signed_at),
-        "nonce": nonce,
-        "result_payload": result_payload,
-    }
-
-
-def _build_fail_signature_payload(
-    *,
-    session_id: str,
-    lease_id: str,
-    trace_id: str,
-    task_type: str,
-    worker_version: str | None,
-    signed_at,
-    nonce: str,
-    error_message: str,
-) -> dict[str, Any]:
-    return {
-        "session_id": session_id,
-        "lease_id": lease_id,
-        "trace_id": trace_id,
-        "task_type": task_type,
-        "worker_version": worker_version,
-        "signed_at": format_worker_gateway_timestamp(signed_at),
-        "nonce": nonce,
-        "error_message": error_message,
-    }
-
-
-def _rebuild_rss_claim_payload(
-    content_db: Session,
-    claimed_task: object,
-) -> dict[str, Any] | None:
-    row = claimed_task
-    feed_ids = getattr(row, "ref_ids", [])
-    if not feed_ids:
-        return None
-    feeds = list_rss_feed_scrape_payloads_by_ordered_ids(
-        content_db,
-        feed_ids=feed_ids,
-    )
-    if len(feeds) != len(feed_ids):
-        return None
-    if [int(feed.feed_id) for feed in feeds] != [int(feed_id) for feed_id in feed_ids]:
-        return None
-    return {
-        "job_id": getattr(row, "job_id"),
-        "requested_at": getattr(row, "requested_at").isoformat(),
-        "ingest": True,
-        "requested_by": "jobs.rss_scrape",
-        "feeds": [feed.model_dump(mode="json") for feed in feeds],
-    }

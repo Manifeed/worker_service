@@ -1,33 +1,18 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
+
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from shared_backend.utils.datetime_utils import normalize_datetime_to_utc
 
-
-@dataclass(frozen=True)
-class WorkerSessionRecord:
-    session_id: str
-    api_key_id: int
-    worker_type: str
-    worker_version: str | None
-    expires_at: datetime
-
-
-@dataclass(frozen=True)
-class WorkerLeaseRecord:
-    lease_id: str
-    session_id: str
-    task_type: str
-    payload_ref: str
-    expires_at: datetime
-    result_status: str | None
-    result_nonce: str | None
-    signature_hash: str
-    result_signature_hash: str | None
+from app.clients.database.worker_gateway_models import (
+    WorkerLeaseRecord,
+    WorkerSessionRecord,
+    map_worker_lease,
+    map_worker_session,
+)
 
 
 def create_worker_session(
@@ -41,7 +26,7 @@ def create_worker_session(
 ) -> WorkerSessionRecord:
     row = (
         db.execute(
-            text(  # nosec
+            text(
                 """
                 INSERT INTO worker_sessions (
                     session_id,
@@ -75,7 +60,7 @@ def create_worker_session(
         .mappings()
         .one()
     )
-    return _map_worker_session(row)
+    return map_worker_session(row)
 
 
 def get_worker_session(
@@ -107,9 +92,7 @@ def get_worker_session(
         .mappings()
         .one_or_none()
     )
-    if row is None:
-        return None
-    return _map_worker_session(row)
+    return map_worker_session(row) if row is not None else None
 
 
 def create_worker_lease(
@@ -171,7 +154,7 @@ def create_worker_lease(
         .mappings()
         .one()
     )
-    return _map_worker_lease(row)
+    return map_worker_lease(row)
 
 
 def get_worker_lease(
@@ -207,9 +190,7 @@ def get_worker_lease(
         .mappings()
         .one_or_none()
     )
-    if row is None:
-        return None
-    return _map_worker_lease(row)
+    return map_worker_lease(row) if row is not None else None
 
 
 def reserve_worker_lease_result(
@@ -256,19 +237,13 @@ def reserve_worker_lease_result(
         .mappings()
         .one_or_none()
     )
-    if row is None:
-        return None
-    return _map_worker_lease(row)
+    return map_worker_lease(row) if row is not None else None
 
 
-def count_active_worker_sessions(
-    db: Session,
-    *,
-    worker_type: str | None = None,
-) -> int:
-    filters = ["expires_at > now()"]
+def count_active_worker_sessions(db: Session, *, worker_type: str | None = None) -> int:
+    filters = ["expires_at >= now()"]
     params: dict[str, object] = {}
-    if worker_type is not None:
+    if worker_type:
         filters.append("worker_type = :worker_type")
         params["worker_type"] = worker_type
     return int(
@@ -283,32 +258,4 @@ def count_active_worker_sessions(
             params,
         ).scalar_one()
         or 0
-    )
-
-
-def _map_worker_session(row) -> WorkerSessionRecord:
-    return WorkerSessionRecord(
-        session_id=str(row["session_id"]),
-        api_key_id=int(row["api_key_id"]),
-        worker_type=str(row["worker_type"]),
-        worker_version=(str(row["worker_version"]) if row["worker_version"] is not None else None),
-        expires_at=normalize_datetime_to_utc(row["expires_at"]) or datetime.now(timezone.utc),
-    )
-
-
-def _map_worker_lease(row) -> WorkerLeaseRecord:
-    return WorkerLeaseRecord(
-        lease_id=str(row["lease_id"]),
-        session_id=str(row["session_id"]),
-        task_type=str(row["task_type"]),
-        payload_ref=str(row["payload_ref"]),
-        expires_at=normalize_datetime_to_utc(row["expires_at"]) or datetime.now(timezone.utc),
-        result_status=(str(row["result_status"]) if row["result_status"] is not None else None),
-        result_nonce=(str(row["result_nonce"]) if row["result_nonce"] is not None else None),
-        signature_hash=str(row["signature_hash"]),
-        result_signature_hash=(
-            str(row["result_signature_hash"])
-            if row["result_signature_hash"] is not None
-            else None
-        ),
     )

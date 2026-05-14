@@ -23,7 +23,7 @@ from app.services.worker_auth_service import (
     require_authenticated_worker_context,
 )
 
-from database import (
+from app.database import (
     get_content_read_db_session,
     get_content_write_db_session,
     get_identity_read_db_session,

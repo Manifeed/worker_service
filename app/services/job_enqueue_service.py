@@ -12,7 +12,6 @@ from app.clients.networking.redis_embedding_queue_client import RedisEmbeddingQu
 from app.domain.rss_scrape_batching import build_rss_scrape_batches
 from shared_backend.schemas.enums import WorkerJobKind, WorkerJobStatus
 from shared_backend.schemas.jobs.job_enqueue_schema import JobEnqueueRead
-from app.clients.database.article_embedding_database_client import list_article_ids_without_embeddings
 from app.domain.source_embedding_config import (
     FIXED_SOURCE_EMBEDDING_MODEL_NAME,
     resolve_embed_task_lease_seconds,
@@ -26,6 +25,7 @@ from app.clients.database.worker_job_database_client import (
     enqueue_worker_tasks,
     get_active_worker_job_id,
 )
+from shared_backend.clients.article_embedding_database_client import list_article_ids_without_embeddings
 
 JOB_ID_TIMESTAMP_FORMAT = "%Y-%m-%d-%H-%M-%S"
 logger = logging.getLogger(__name__)

@@ -39,7 +39,7 @@ from app.services.job_read_service import (
     list_jobs,
 )
 
-from database import (
+from app.database import (
     get_content_read_db_session,
     get_workers_read_db_session,
     get_workers_write_db_session,
