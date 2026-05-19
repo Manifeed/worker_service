@@ -1,22 +1,6 @@
 from __future__ import annotations
 
-import re
-from pathlib import Path
 from urllib.parse import urlsplit
-
-
-def normalize_name_from_filename(file_name: str) -> str:
-    raw_name = Path(file_name).stem.replace("_", " ")
-    normalized_name = re.sub(r"\s+", " ", raw_name).strip()
-    if not normalized_name:
-        raise ValueError(f"Could not derive name from file path: {file_name}")
-    return normalized_name
-
-
-def normalize_country(country: str | None) -> str | None:
-    if country is None:
-        return "xx"
-    return country.strip().lower()[:2] or "xx"
 
 
 def normalize_host(host: str | None) -> str | None:

@@ -5,11 +5,10 @@ FastAPI service dedicated to worker orchestration.
 It owns:
 
 - worker sessions, task claiming, completion and failure endpoints under `/workers/api`
-- admin job creation, job control, and job automation behind internal endpoints under `/internal/jobs`
-- RSS result normalization/persistence and embedding finalization
+- RSS result normalization and persistence
 
-`public_api` is the browser-facing facade for admin job routes. Rust workers keep calling
-`/workers/api/...` through the edge proxy.
+Admin job creation, control, and automation now live in `admin_service`.
+Rust workers keep calling `/workers/api/...` through the edge proxy.
 
 The service consumes `shared_backend` for shared internal schemas and internal
 service token validation helpers.

@@ -7,12 +7,6 @@ from datetime import datetime
 QUEUE_NAME_RSS_SCRAPE_REQUESTS = "rss.fetch"
 QUEUE_NAME_SOURCE_EMBEDDING_REQUESTS = "embed.source"
 
-TASK_KIND_RSS_SCRAPE = "rss_scrape"
-TASK_KIND_SOURCE_EMBEDDING = "source_embedding"
-
-WORKER_TYPE_RSS_SCRAPPER = "rss_scrapper"
-WORKER_TYPE_SOURCE_EMBEDDING = "source_embedding"
-
 RUNTIME_COUNTER_STALE_REDIS_TASK_IDS_DROPPED = "stale_redis_task_ids_dropped"
 RUNTIME_COUNTER_EMBEDDING_TASKS_REQUEUED = "embedding_tasks_requeued"
 RUNTIME_COUNTER_PAYLOAD_REBUILD_FAILURES = "payload_rebuild_failures"
@@ -49,24 +43,6 @@ class WorkerJobTaskRecord:
     attempt_count: int
     last_error: str | None
     claim_owner: str | None
-
-
-@dataclass(frozen=True)
-class WorkerJobRecord:
-    job_id: str
-    job_kind: str
-    task_type: str
-    worker_version: str | None
-    requested_at: datetime
-    started_at: datetime | None
-    finished_at: datetime | None
-    finalized_at: datetime | None
-    status: str
-    task_total: int
-    task_processed: int
-    item_total: int
-    item_success: int
-    item_error: int
 
 
 @dataclass(frozen=True)

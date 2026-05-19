@@ -8,7 +8,6 @@ from app.services.rss_worker_article_persistence import merge_candidates_into_ar
 from app.services.rss_worker_ingestion_candidates import (
     build_candidate_rows,
     load_feed_contexts,
-    normalize_article_image_url,
 )
 from app.services.rss_worker_runtime_persistence import upsert_rss_feed_runtime
 
@@ -34,6 +33,3 @@ def persist_rss_task_results(
     )
     merge_candidates_into_articles(db, candidate_rows=candidate_rows)
     upsert_rss_feed_runtime(db, results=results)
-
-
-_normalize_article_image_url = normalize_article_image_url

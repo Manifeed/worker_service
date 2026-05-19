@@ -9,10 +9,6 @@ from datetime import datetime, timezone
 from typing import Any
 
 
-class CanonicalJsonNumber(str):
-    pass
-
-
 def generate_worker_gateway_id(prefix: str) -> str:
     return f"{prefix}_{secrets.token_hex(16)}"
 
@@ -70,8 +66,6 @@ def _normalize_worker_gateway_payload(value: Any) -> Any:
 
 
 def _serialize_worker_gateway_payload(value: Any) -> str:
-    if isinstance(value, CanonicalJsonNumber):
-        return str(value)
     if value is None:
         return "null"
     if isinstance(value, bool):

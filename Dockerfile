@@ -1,4 +1,4 @@
-FROM python:3.11-slim AS builder
+FROM python:3.13-slim AS builder
 
 WORKDIR /build
 
@@ -16,7 +16,7 @@ RUN python -m venv /opt/venv \
     && /opt/venv/bin/pip install --no-cache-dir /tmp/wheels/manifeed_shared_backend-*.whl \
     && /opt/venv/bin/pip install --no-cache-dir --timeout 120 --retries 10 -r /build/requirements.txt
 
-FROM python:3.11-slim
+FROM python:3.13-slim
 
 WORKDIR /app
 
