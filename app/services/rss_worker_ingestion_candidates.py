@@ -7,6 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.domain.article_authors import coerce_article_author_names
+from app.domain.language_detection import detect_article_language
 from app.schemas.workers.worker_result_schema import WorkerResultSchema
 from shared_backend.domain.article_identity import build_article_content_key, build_article_key
 from shared_backend.domain.source_identity import normalize_source_url
@@ -15,13 +16,13 @@ from shared_backend.utils.public_url import normalize_public_http_url
 
 
 ARTICLE_IMAGE_URL_MAX_LENGTH = 1000
-ARTICLE_URL_STORAGE_MAX_LENGTH = 4000
 NORMALIZED_ARTICLE_URL_MAX_LENGTH = 1000
 
 
 @dataclass(frozen=True)
 class FeedContext:
     feed_id: int
+    feed_url: str | None
     company_id: int | None
     company_name: str | None
     country: str
@@ -41,6 +42,7 @@ class CandidateRow:
     image_url: str | None
     company_id: int | None
     country: str
+    language: str
     duplicate_hint: bool
 
 
@@ -58,6 +60,7 @@ def load_feed_contexts(
                 """
                 SELECT
                     feed.id AS feed_id,
+                    feed.url AS feed_url,
                     feed.company_id,
                     company.name AS company_name,
                     COALESCE(NULLIF(company.country, ''), 'xx') AS country
@@ -75,6 +78,7 @@ def load_feed_contexts(
     return {
         int(row["feed_id"]): FeedContext(
             feed_id=int(row["feed_id"]),
+            feed_url=str(row["feed_url"]) if row["feed_url"] is not None else None,
             company_id=int(row["company_id"]) if row["company_id"] is not None else None,
             company_name=str(row["company_name"]) if row["company_name"] is not None else None,
             country=str(row["country"] or "xx"),
@@ -132,6 +136,12 @@ def build_candidate_rows(
                     image_url=normalize_article_image_url(source.image_url),
                     company_id=feed_context.company_id if feed_context is not None else None,
                     country=feed_context.country if feed_context is not None else "xx",
+                    language=detect_article_language(
+                        country=feed_context.country if feed_context is not None else "xx",
+                        title=source.title,
+                        summary=source.summary,
+                        urls=source.urls + ([feed_context.feed_url] if feed_context and feed_context.feed_url else []),
+                    ),
                     duplicate_hint=False,
                 )
             )
@@ -171,6 +181,7 @@ def build_candidate_rows(
                 image_url=provisional_row.image_url,
                 company_id=provisional_row.company_id,
                 country=provisional_row.country,
+                language=provisional_row.language,
                 duplicate_hint=duplicate_hint,
             )
         )
@@ -208,30 +219,23 @@ def upsert_article_url_variants(
         if len(normalized_url) > NORMALIZED_ARTICLE_URL_MAX_LENGTH:
             continue
         seen_normalized_urls.add(normalized_url)
-        stored_url = raw_url.strip()
-        if len(stored_url) > ARTICLE_URL_STORAGE_MAX_LENGTH:
-            stored_url = stored_url[:ARTICLE_URL_STORAGE_MAX_LENGTH]
         db.execute(
             text(
                 """
                 INSERT INTO article_url (
                     article_id,
-                    url,
-                    normalized_url
+                    url
                 ) VALUES (
                     :article_id,
-                    :url,
-                    :normalized_url
+                    :url
                 )
-                ON CONFLICT (normalized_url) DO UPDATE SET
-                    article_id = EXCLUDED.article_id,
-                    url = EXCLUDED.url
+                ON CONFLICT (url) DO UPDATE SET
+                    article_id = EXCLUDED.article_id
                 """
             ),
             {
                 "article_id": article_id,
-                "url": stored_url,
-                "normalized_url": normalized_url,
+                "url": normalized_url,
             },
         )
 

@@ -16,11 +16,23 @@ RUN python -m venv /opt/venv \
     && /opt/venv/bin/pip install --no-cache-dir /tmp/wheels/manifeed_shared_backend-*.whl \
     && /opt/venv/bin/pip install --no-cache-dir --timeout 120 --retries 10 -r /build/requirements.txt
 
+RUN mkdir -p /opt/models \
+    && python - <<'PY'
+from pathlib import Path
+from urllib.request import urlretrieve
+
+model_url = "https://dl.fbaipublicfiles.com/fasttext/supervised-models/lid.176.ftz"
+destination = Path("/opt/models/lid.176.ftz")
+urlretrieve(model_url, destination)
+print(f"downloaded {destination} from {model_url}")
+PY
+
 FROM python:3.13-slim
 
 WORKDIR /app
 
 ENV PATH="/opt/venv/bin:$PATH" \
+    LANGUAGE_FASTTEXT_MODEL_PATH="/opt/models/lid.176.ftz" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
@@ -28,6 +40,7 @@ ENV PATH="/opt/venv/bin:$PATH" \
 RUN useradd --create-home --home-dir /home/appuser --shell /usr/sbin/nologin appuser
 
 COPY --from=builder /opt/venv /opt/venv
+COPY --from=builder /opt/models /opt/models
 COPY --chown=appuser:appuser . /app/
 
 USER appuser

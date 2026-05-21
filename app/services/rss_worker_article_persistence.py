@@ -9,8 +9,6 @@ from app.services.rss_worker_ingestion_candidates import (
     CandidateRow,
     upsert_article_url_variants,
 )
-
-
 def merge_candidates_into_articles(
     db: Session,
     *,
@@ -60,6 +58,7 @@ def _upsert_article(
                         summary,
                         image_url,
                         country,
+                        language,
                         company_id
                     ) VALUES (
                         :article_key,
@@ -71,6 +70,7 @@ def _upsert_article(
                         :summary,
                         :image_url,
                         :country,
+                        :language,
                         :company_id
                     )
                     RETURNING article_id
@@ -85,6 +85,7 @@ def _upsert_article(
                     "summary": candidate_row.summary,
                     "image_url": candidate_row.image_url,
                     "country": candidate_row.country or "xx",
+                    "language": candidate_row.language or "xx",
                     "company_id": candidate_row.company_id,
                 },
             ).scalar_one()
@@ -99,8 +100,6 @@ def _upsert_article(
     if article_id is None:
         raise RuntimeError("Expected inserted article_id after article upsert")
     return int(article_id), candidate_row.article_key
-
-
 def _find_existing_article(
     db: Session,
     *,
@@ -163,7 +162,12 @@ def _update_article_from_candidate(
                 image_url = COALESCE(:image_url, articles.image_url),
                 content_key = COALESCE(articles.content_key, :content_key),
                 company_id = COALESCE(:company_id, articles.company_id),
-                country = COALESCE(NULLIF(:country, ''), articles.country, 'xx')
+                country = COALESCE(NULLIF(:country, ''), articles.country, 'xx'),
+                language = CASE
+                    WHEN COALESCE(NULLIF(articles.language, ''), 'xx') <> 'xx' THEN articles.language
+                    WHEN COALESCE(NULLIF(:language, ''), 'xx') = 'xx' THEN COALESCE(NULLIF(articles.language, ''), 'xx')
+                    ELSE :language
+                END
             WHERE article_id = :article_id
             """
         ),
@@ -177,10 +181,9 @@ def _update_article_from_candidate(
             "content_key": candidate_row.content_key,
             "company_id": candidate_row.company_id,
             "country": candidate_row.country,
+            "language": candidate_row.language,
         },
     )
-
-
 def _sync_article_authors(
     db: Session,
     *,

@@ -3,6 +3,7 @@ uvicorn==0.27.1
 SQLAlchemy==2.0.41
 psycopg[binary]==3.2.13
 pydantic==2.11.9
+fasttext-community==0.11.7
 PyJWT==2.12.0
 cryptography==46.0.7
 argon2-cffi==23.1.0
